@@ -11,7 +11,7 @@
 , cargoLock ? ./Cargo.lock
 
 , buildDylibs ? false
-, staticMusl ? false
+, staticMusl ? stdenv.targetPlatform.isMusl
 
 , rename
 }:
