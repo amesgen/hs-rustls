@@ -16,6 +16,7 @@ license: CC0-1.0
 license-file: LICENSE
 
 extra-source-files:
+  cbits/hs_rustls.h
   README.md
   CHANGELOG.md
 
