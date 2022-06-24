@@ -1,0 +1,90 @@
+name: CI
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - opened
+      - synchronize
+jobs:
+  test-nix-rustls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: cachix/install-nix-action@v17
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - name: Build and test
+        run: nix flake check ./nix-rustls
+
+  test-nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: cachix/install-nix-action@v17
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - name: Relative flake workaround
+        # due to https://github.com/NixOS/nix/issues/3978#issuecomment-952418478
+        run: nix flake lock --update-input nix-rustls
+      - name: Build and test
+        run: nix flake check
+      - name: Run docspec
+        run: nix develop --command sh -c 'cabal build all && cabal-docspec'
+
+  test-non-nix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc:
+          - 8.6.5
+          - 8.8.4
+          - 8.10.7
+          - 9.0.2
+          - 9.2.3
+    steps:
+      - uses: actions/checkout@v3
+      - uses: cachix/install-nix-action@v17
+      - uses: haskell/actions/setup@v2
+        id: setup-haskell
+        with:
+          ghc-version: ${{ matrix.ghc }}
+
+      - name: Build rustls-ffi
+        run: |
+          cd ${{ runner.temp }}
+          git clone https://github.com/rustls/rustls-ffi
+          cd rustls-ffi
+          make DESTDIR=${{ runner.temp }}/rustls install
+      - name: Install CLI dependencies
+        run: |
+          nix profile install --inputs-from . \
+            nixpkgs#minica \
+            nixpkgs#miniserve
+
+      - name: Configure
+        run: |
+          cabal configure --enable-tests \
+            --extra-include-dirs ${{ runner.temp }}/rustls/include \
+            --extra-lib-dirs     ${{ runner.temp }}/rustls/lib
+      - name: Freeze build
+        run: cabal freeze
+      - uses: actions/cache@v3
+        with:
+          path: ${{ steps.setup-haskell.outputs.cabal-store }}
+          key: cabal-${{ matrix.ghc }}-${{ hashFiles('cabal.project.freeze') }}
+          restore-keys: |
+            cabal-${{ matrix.ghc }}
+
+      - name: Build dependencies
+        run: cabal build all --only-dependencies
+      - name: Build
+        run: cabal build all
+      - name: Run tests
+        run: cabal test all --test-show-details=direct

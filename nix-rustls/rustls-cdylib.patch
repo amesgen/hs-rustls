@@ -1,0 +1,10 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index e90660c..92d145c 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -20,4 +20,4 @@ cbindgen = "*"
+ 
+ [lib]
+ name = "rustls_ffi"
+-crate-type = ["lib", "staticlib"]
++crate-type = ["lib", "staticlib", "cdylib"]
