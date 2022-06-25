@@ -132,8 +132,8 @@ main =
               do
                 lc <- mkTestLogCallback logRef "SERVER"
                 rustlsConfig <-
-                  liftIO . fmap (\cfg -> cfg {Rustls.serverConfigLogCallback = Just lc}) $
-                    Rustls.buildServerConfig serverConfigBuilder
+                  (\cfg -> cfg {Rustls.serverConfigLogCallback = Just lc})
+                    <$> Rustls.buildServerConfig serverConfigBuilder
                 Rustls.newServerConnection backend rustlsConfig
               \conn -> do
                 (alpnProtocol, tlsVersion, cipherSuite, sniHostname, peerCert) <-
@@ -158,8 +158,8 @@ main =
               do
                 lc <- mkTestLogCallback logRef "CLIENT"
                 rustlsConfig <-
-                  liftIO . fmap (\cfg -> cfg {Rustls.clientConfigLogCallback = Just lc}) $
-                    Rustls.buildClientConfig clientConfigBuilder
+                  (\cfg -> cfg {Rustls.clientConfigLogCallback = Just lc})
+                    <$> Rustls.buildClientConfig clientConfigBuilder
                 Rustls.newClientConnection backend rustlsConfig testHostname
               \conn -> do
                 (alpnProtocol, tlsVersion, cipherSuite, peerCert) <-
