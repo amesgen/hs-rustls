@@ -191,7 +191,7 @@ allTLSVersions :: NonEmpty TLSVersion
 allTLSVersions = peekNonEmpty FFI.allVersions FFI.allVersionsLen
 {-# NOINLINE allTLSVersions #-}
 
--- | The default 'TLSVersion's used by Rustls. A subset of 'defaultTLSVersions'.
+-- | The default 'TLSVersion's used by Rustls. A subset of 'allTLSVersions'.
 defaultTLSVersions :: NonEmpty TLSVersion
 defaultTLSVersions = peekNonEmpty FFI.defaultVersions FFI.defaultVersionsLen
 {-# NOINLINE defaultTLSVersions #-}

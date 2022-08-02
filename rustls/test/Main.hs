@@ -262,11 +262,9 @@ main =
             tmpDir <-
               flip Temp.createTempDirectory "hs-rustls-minica"
                 =<< Temp.getCanonicalTemporaryDirectory
-            let runMiniCA domain =
-                  void $ Process.readCreateProcess (cp {Process.cwd = Just tmpDir}) ""
-                  where
-                    cp = Process.proc "minica" ["-domains", domain]
-            for_ ["example.org", "client.example.org"] runMiniCA
+            for_ ["example.org", "client.example.org"] \domain -> do
+              let cp = Process.proc "minica" ["-domains", domain]
+              void $ Process.readCreateProcess (cp {Process.cwd = Just tmpDir}) ""
             let miniCAFile = tmpDir </> "minica.pem"
             miniCACert <- B.readFile miniCAFile
             let miniCACertKey domain = do
