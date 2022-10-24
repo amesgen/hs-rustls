@@ -123,7 +123,7 @@ main =
     testHostname = "example.org"
     testMessageLen = 1000
     testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
-      testPropertyNamed "Test in-memory TLS" "Test in-memory TLS" $ property do
+      testProperty "Test in-memory TLS" $ property do
         TestSetup {..} <- forAll . genTestSetup =<< liftIO getMiniCA
 
         logRef <- liftIO $ newIORef []

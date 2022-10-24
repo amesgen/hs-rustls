@@ -2,4 +2,7 @@ packages:
   rustls
   http-client-rustls
 
-constraints: rustls -derive-storable-plugin
+-- remove when derive-storable-plugin supports 9.4
+if impl(ghc >= 9.4)
+   package rustls
+     flags: -derive-storable-plugin
