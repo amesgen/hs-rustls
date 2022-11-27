@@ -24,6 +24,7 @@
           overlays = [
             haskellNix.overlay
             nur.overlay
+            (_: prev: { inherit (pkgs.nur.repos.amesgen) ormolu cabal-docspec; })
             nix-rustls.overlays.default
             # ghci(d) needs dynamic libs
             (_: prev: { rustls = prev.rustls.override (_: { buildDylibs = true; }); })
@@ -34,7 +35,7 @@
         projectPackages = [ "rustls" "http-client-rustls" ];
         hsPkgs = haskell-nix.cabalProject {
           src = ./.;
-          compiler-nix-name = "ghc924";
+          compiler-nix-name = "ghc925";
           modules = [
             { packages = lib.genAttrs projectPackages (_: { ghcOptions = [ "-Werror" ]; }); }
             {
@@ -55,7 +56,7 @@
           pre-commit-check = pre-commit-hooks.lib.${system}.run {
             src = ./.;
             hooks.ormolu.enable = true;
-            tools = { inherit (pkgs.nur.repos.amesgen) ormolu; };
+            tools = { inherit (pkgs) ormolu; };
           };
         };
         devShells.default = hsPkgs.shellFor {
@@ -64,11 +65,11 @@
           buildInputs = [
             pkgs.minica
             pkgs.miniserve
-            pkgs.nur.repos.amesgen.cabal-docspec
+            pkgs.cabal-docspec
+            pkgs.ormolu
           ];
           LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.rustls ];
           withHoogle = false;
-          withHaddock = true;
           inherit (self.checks.${system}.pre-commit-check) shellHook;
         };
       });
