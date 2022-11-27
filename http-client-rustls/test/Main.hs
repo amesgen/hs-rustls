@@ -19,29 +19,19 @@ import Test.Tasty.HUnit
 
 main :: IO ()
 main = defaultMain $ withRustlsManagerAndServer \(fmap fst -> mgr) ->
-  let failsOn req =
-        E.try (HTTP.httpNoBody (modifyReq req) =<< mgr) >>= \case
-          Right _ ->
-            assertFailure "Established invalid TLS connection!"
-          Left (E.fromException -> Just (HTTP.HttpExceptionRequest _ (HTTP.InternalException ie)))
-            | Just (e :: Rustls.RustlsException) <- E.fromException ie,
-              Rustls.isCertError e ->
-                mempty
-          Left (E.SomeException e) ->
-            assertFailure $ "Failed with unexpected exception: " <> show e
-   in testGroup
-        "HTTPS-via-Rustls connectivity tests"
-        [ testCase "Make an HTTPS request" do
-            req <- modifyReq <$> HTTP.parseUrlThrow "https://example.org"
-            res <- HTTP.httpNoBody req =<< mgr
-            HTTP.responseStatus res @?= HTTP.status200,
-          testCase "Download byte stream" do
-            req <- modifyReq <$> HTTP.parseUrlThrow "https://example.org/file"
-            res <- HTTP.httpLbs req =<< mgr
-            BL.length (HTTP.responseBody res) @?= fromIntegral fileLength,
-          testCase "Fail on wrong host" $
-            failsOn "https://examplee.org"
-        ]
+  testGroup
+    "HTTPS-via-Rustls connectivity tests"
+    [ testCase "Make an HTTPS request" do
+        req <- modifyReq <$> HTTP.parseUrlThrow "https://example.org"
+        res <- HTTP.httpNoBody req =<< mgr
+        HTTP.responseStatus res @?= HTTP.status200,
+      testCase "Download byte stream" do
+        req <- modifyReq <$> HTTP.parseUrlThrow "https://example.org/file"
+        res <- HTTP.httpLbs req =<< mgr
+        BL.length (HTTP.responseBody res) @?= fromIntegral fileLength,
+      testCase "Fail on wrong host" $
+        failsOn mgr "https://examplee.org"
+    ]
   where
     fileLength = 100000
     fileByte = 42
@@ -51,6 +41,17 @@ main = defaultMain $ withRustlsManagerAndServer \(fmap fst -> mgr) ->
         { HTTP.port = 8080,
           HTTP.hostAddress = Just $ tupleToHostAddress (127, 0, 0, 1)
         }
+
+    failsOn mgr req =
+      E.try (HTTP.httpNoBody (modifyReq req) =<< mgr) >>= \case
+        Right _ ->
+          assertFailure "Established invalid TLS connection!"
+        Left (E.fromException -> Just (HTTP.HttpExceptionRequest _ (HTTP.InternalException ie)))
+          | Just (e :: Rustls.RustlsException) <- E.fromException ie,
+            Rustls.isCertError e ->
+              mempty
+        Left (E.SomeException e) ->
+          assertFailure $ "Failed with unexpected exception: " <> show e
 
     withRustlsManagerAndServer = withResource prepareServer cleanupServer
       where

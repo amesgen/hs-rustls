@@ -32,6 +32,101 @@ import Test.Tasty
 import Test.Tasty.HUnit hiding (assert)
 import Test.Tasty.Hedgehog
 
+main :: IO ()
+main =
+  defaultMain . testGroup "Basic Rustls tests" $
+    [ testCase "Test version" $ Rustls.version @?= "rustls-ffi/0.9.1/rustls/0.20.4",
+      testCase "TLS versions" do
+        S.fromList [Rustls.TLS12, Rustls.TLS13]
+          @?= S.fromList (NE.toList Rustls.defaultTLSVersions)
+        assertBool "Unexpected default TLS versions" $
+          S.fromList (NE.toList Rustls.defaultTLSVersions)
+            `S.isSubsetOf` S.fromList (NE.toList Rustls.allTLSVersions),
+      testCase "Cipher suites" do
+        let defaultCipherSuites = S.fromList (NE.toList Rustls.defaultCipherSuites)
+            allCipherSuites = S.fromList (NE.toList Rustls.allCipherSuites)
+        assertBool "Unexpected default cipher suites" $
+          defaultCipherSuites `S.isSubsetOf` allCipherSuites
+        assertBool "Misbehaving ID function for cipher suites" $
+          S.map Rustls.cipherSuiteID defaultCipherSuites
+            `S.isSubsetOf` S.map Rustls.cipherSuiteID allCipherSuites
+        assertBool "Misbehaving display function for cipher suites" $
+          S.map Rustls.showCipherSuite defaultCipherSuites
+            `S.isSubsetOf` S.map Rustls.showCipherSuite allCipherSuites,
+      testInMemory
+    ]
+
+testInMemory :: TestTree
+testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
+  testProperty "Test in-memory TLS" $ property do
+    testSetup <- forAll . genTestSetup =<< liftIO getMiniCA
+
+    (res, tlsLogLines) <- runInMemoryTest testSetup
+
+    footnote $ "TLS log:\n" <> T.unpack (T.unlines tlsLogLines)
+
+    let TestSetup {..} = testSetup
+        Rustls.ClientConfigBuilder {..} = clientConfigBuilder
+        Rustls.ServerConfigBuilder {..} = serverConfigBuilder
+        clientTLSVersions =
+          nonEmptySet Rustls.defaultTLSVersions clientConfigTLSVersions
+        serverTLSVersions =
+          nonEmptySet Rustls.defaultTLSVersions serverConfigTLSVersions
+        clientCipherSuites =
+          nonEmptySet Rustls.defaultCipherSuites clientConfigCipherSuites
+        serverCipherSuites =
+          nonEmptySet Rustls.defaultCipherSuites serverConfigCipherSuites
+    case res of
+      Right TestOutcome {..} -> do
+        label "Success"
+        clientSends === serverReceived
+        clientSends === clientReceived
+        if clientConfigEnableSNI
+          then sniHostname === Just testHostname
+          else sniHostname === Nothing
+        assert $
+          S.fromList [clientTLSVersion, serverTLSVersion]
+            `S.isSubsetOf` S.fromList [Rustls.TLS12, Rustls.TLS13]
+        negotiatedClientALPNProtocol === negotiatedServerALPNProtocol
+        assert $
+          maybe S.empty S.singleton negotiatedClientALPNProtocol
+            `S.isSubsetOf` ( S.fromList clientConfigALPNProtocols
+                               `S.intersection` S.fromList serverConfigALPNProtocols
+                           )
+        clientCipherSuite === serverCipherSuite
+        assert $
+          clientCipherSuite
+            `S.member` (clientCipherSuites `S.intersection` serverCipherSuites)
+        assert $ isJust clientPeerCert
+        case serverConfigClientCertVerifier of
+          Nothing ->
+            serverPeerCert === Nothing
+          Just (Rustls.ClientCertVerifier _) ->
+            assert $ isJust serverPeerCert
+          Just (Rustls.ClientCertVerifierOptional _) ->
+            isJust serverPeerCert /== null clientConfigCertifiedKeys
+      Left (ex :: Rustls.RustlsException) -> do
+        label "Expected TLS failure"
+        annotate $ E.displayException ex
+        if
+            | S.fromList clientConfigALPNProtocols
+                `S.disjoint` S.fromList serverConfigALPNProtocols ->
+                success
+            | clientTLSVersions `S.disjoint` serverTLSVersions ->
+                success
+            | Just (Rustls.ClientCertVerifier _) <- serverConfigClientCertVerifier,
+              null clientConfigCertifiedKeys ->
+                success
+            | otherwise -> failure
+  where
+    nonEmptySet def = S.fromList . NE.toList . fromMaybe def . NE.nonEmpty
+
+testHostname :: Text
+testHostname = "example.org"
+
+testMessageLen :: Int
+testMessageLen = 1000
+
 data TestSetup = TestSetup
   { clientConfigBuilder :: Rustls.ClientConfigBuilder,
     serverConfigBuilder :: Rustls.ServerConfigBuilder,
@@ -96,185 +191,104 @@ data TestOutcome = TestOutcome
     clientReceived, serverReceived :: [ByteString]
   }
 
-main :: IO ()
-main =
-  defaultMain . testGroup "Basic Rustls tests" $
-    [ testCase "Test version" $ Rustls.version @?= "rustls-ffi/0.9.1/rustls/0.20.4",
-      testCase "TLS versions" do
-        S.fromList [Rustls.TLS12, Rustls.TLS13]
-          @?= S.fromList (NE.toList Rustls.defaultTLSVersions)
-        assertBool "Unexpected default TLS versions" $
-          S.fromList (NE.toList Rustls.defaultTLSVersions)
-            `S.isSubsetOf` S.fromList (NE.toList Rustls.allTLSVersions),
-      testCase "Cipher suites" do
-        let defaultCipherSuites = S.fromList (NE.toList Rustls.defaultCipherSuites)
-            allCipherSuites = S.fromList (NE.toList Rustls.allCipherSuites)
-        assertBool "Unexpected default cipher suites" $
-          defaultCipherSuites `S.isSubsetOf` allCipherSuites
-        assertBool "Misbehaving ID function for cipher suites" $
-          S.map Rustls.cipherSuiteID defaultCipherSuites
-            `S.isSubsetOf` S.map Rustls.cipherSuiteID allCipherSuites
-        assertBool "Misbehaving display function for cipher suites" $
-          S.map Rustls.showCipherSuite defaultCipherSuites
-            `S.isSubsetOf` S.map Rustls.showCipherSuite allCipherSuites,
-      testInMemory
-    ]
-  where
-    testHostname = "example.org"
-    testMessageLen = 1000
-    testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
-      testProperty "Test in-memory TLS" $ property do
-        TestSetup {..} <- forAll . genTestSetup =<< liftIO getMiniCA
+runInMemoryTest ::
+  MonadIO m =>
+  TestSetup ->
+  m (Either Rustls.RustlsException TestOutcome, [Text])
+runInMemoryTest TestSetup {..} = do
+  logRef <- liftIO $ newIORef []
 
-        logRef <- liftIO $ newIORef []
-
-        let runServer backend = withAcquire
-              do
-                lc <- mkTestLogCallback logRef "SERVER"
-                rustlsConfig <-
-                  (\cfg -> cfg {Rustls.serverConfigLogCallback = Just lc})
-                    <$> Rustls.buildServerConfig serverConfigBuilder
-                Rustls.newServerConnection backend rustlsConfig
-              \conn -> do
-                (alpnProtocol, tlsVersion, cipherSuite, sniHostname, peerCert) <-
-                  Rustls.handshake conn $
-                    (,,,,)
-                      <$> Rustls.getALPNProtocol
-                      <*> Rustls.getTLSVersion
-                      <*> Rustls.getCipherSuite
-                      <*> Rustls.getSNIHostname
-                      <*> Rustls.getPeerCertificate 0
-                received <-
-                  let go = do
-                        bs <- Rustls.readBS conn testMessageLen
-                        when (bs /= "close") do
-                          modify' (bs :)
-                          Rustls.writeBS conn bs
-                          go
-                   in recordOutput go
-                pure (alpnProtocol, tlsVersion, cipherSuite, sniHostname, peerCert, received)
-
-            runClient backend = withAcquire
-              do
-                lc <- mkTestLogCallback logRef "CLIENT"
-                rustlsConfig <-
-                  (\cfg -> cfg {Rustls.clientConfigLogCallback = Just lc})
-                    <$> Rustls.buildClientConfig clientConfigBuilder
-                Rustls.newClientConnection backend rustlsConfig testHostname
-              \conn -> do
-                (alpnProtocol, tlsVersion, cipherSuite, peerCert) <-
-                  Rustls.handshake conn $
-                    (,,,)
-                      <$> Rustls.getALPNProtocol
-                      <*> Rustls.getTLSVersion
-                      <*> Rustls.getCipherSuite
-                      <*> Rustls.getPeerCertificate 0
-                received <- recordOutput . for_ clientSends $ \bs -> do
-                  Rustls.writeBS conn bs
-                  bs <- Rustls.readBS conn testMessageLen
-                  modify' (bs :)
-                Rustls.writeBS conn "close"
-                pure (alpnProtocol, tlsVersion, cipherSuite, peerCert, received)
-
-        (backend0, backend1) <- mkConnectedBSBackends
-
-        res <- liftIO . runExceptT $ do
-          ( ( negotiatedServerALPNProtocol,
-              serverTLSVersion,
-              serverCipherSuite,
-              sniHostname,
-              serverPeerCert,
-              serverReceived
-              ),
-            ( negotiatedClientALPNProtocol,
-              clientTLSVersion,
-              clientCipherSuite,
-              clientPeerCert,
-              clientReceived
-              )
-            ) <-
-            ExceptT . E.try $ concurrently (runServer backend0) (runClient backend1)
-          pure TestOutcome {..}
-
+  let runServer backend = withAcquire
         do
-          logLines <- liftIO $ T.unlines . reverse <$> readIORef logRef
-          footnote $ "TLS log:\n" <> T.unpack logLines
+          lc <- mkTestLogCallback logRef "SERVER"
+          rustlsConfig <-
+            (\cfg -> cfg {Rustls.serverConfigLogCallback = Just lc})
+              <$> Rustls.buildServerConfig serverConfigBuilder
+          Rustls.newServerConnection backend rustlsConfig
+        \conn -> do
+          (alpnProtocol, tlsVersion, cipherSuite, sniHostname, peerCert) <-
+            Rustls.handshake conn $
+              (,,,,)
+                <$> Rustls.getALPNProtocol
+                <*> Rustls.getTLSVersion
+                <*> Rustls.getCipherSuite
+                <*> Rustls.getSNIHostname
+                <*> Rustls.getPeerCertificate 0
+          received <-
+            let go = do
+                  bs <- Rustls.readBS conn testMessageLen
+                  when (bs /= "close") do
+                    modify' (bs :)
+                    Rustls.writeBS conn bs
+                    go
+             in recordOutput go
+          pure (alpnProtocol, tlsVersion, cipherSuite, sniHostname, peerCert, received)
 
-        let Rustls.ClientConfigBuilder {..} = clientConfigBuilder
-            Rustls.ServerConfigBuilder {..} = serverConfigBuilder
-            clientTLSVersions =
-              nonEmptySet Rustls.defaultTLSVersions clientConfigTLSVersions
-            serverTLSVersions =
-              nonEmptySet Rustls.defaultTLSVersions serverConfigTLSVersions
-            clientCipherSuites =
-              nonEmptySet Rustls.defaultCipherSuites clientConfigCipherSuites
-            serverCipherSuites =
-              nonEmptySet Rustls.defaultCipherSuites serverConfigCipherSuites
-        case res of
-          Right TestOutcome {..} -> do
-            label "Success"
-            clientSends === serverReceived
-            clientSends === clientReceived
-            if clientConfigEnableSNI
-              then sniHostname === Just testHostname
-              else sniHostname === Nothing
-            assert $
-              S.fromList [clientTLSVersion, serverTLSVersion]
-                `S.isSubsetOf` S.fromList [Rustls.TLS12, Rustls.TLS13]
-            negotiatedClientALPNProtocol === negotiatedServerALPNProtocol
-            assert $
-              maybe S.empty S.singleton negotiatedClientALPNProtocol
-                `S.isSubsetOf` ( S.fromList clientConfigALPNProtocols
-                                   `S.intersection` S.fromList serverConfigALPNProtocols
-                               )
-            clientCipherSuite === serverCipherSuite
-            assert $
-              clientCipherSuite
-                `S.member` (clientCipherSuites `S.intersection` serverCipherSuites)
-            assert $ isJust clientPeerCert
-            case serverConfigClientCertVerifier of
-              Nothing ->
-                serverPeerCert === Nothing
-              Just (Rustls.ClientCertVerifier _) ->
-                assert $ isJust serverPeerCert
-              Just (Rustls.ClientCertVerifierOptional _) ->
-                isJust serverPeerCert /== null clientConfigCertifiedKeys
-          Left (ex :: Rustls.RustlsException) -> do
-            label "Expected TLS failure"
-            annotate $ E.displayException ex
-            if
-                | S.fromList clientConfigALPNProtocols
-                    `S.disjoint` S.fromList serverConfigALPNProtocols ->
-                    success
-                | clientTLSVersions `S.disjoint` serverTLSVersions ->
-                    success
-                | Just (Rustls.ClientCertVerifier _) <- serverConfigClientCertVerifier,
-                  null clientConfigCertifiedKeys ->
-                    success
-                | otherwise -> failure
-      where
-        recordOutput = fmap reverse . flip execStateT []
+      runClient backend = withAcquire
+        do
+          lc <- mkTestLogCallback logRef "CLIENT"
+          rustlsConfig <-
+            (\cfg -> cfg {Rustls.clientConfigLogCallback = Just lc})
+              <$> Rustls.buildClientConfig clientConfigBuilder
+          Rustls.newClientConnection backend rustlsConfig testHostname
+        \conn -> do
+          (alpnProtocol, tlsVersion, cipherSuite, peerCert) <-
+            Rustls.handshake conn $
+              (,,,)
+                <$> Rustls.getALPNProtocol
+                <*> Rustls.getTLSVersion
+                <*> Rustls.getCipherSuite
+                <*> Rustls.getPeerCertificate 0
+          received <- recordOutput . for_ clientSends $ \bs -> do
+            Rustls.writeBS conn bs
+            bs <- Rustls.readBS conn testMessageLen
+            modify' (bs :)
+          Rustls.writeBS conn "close"
+          pure (alpnProtocol, tlsVersion, cipherSuite, peerCert, received)
 
-        nonEmptySet def = S.fromList . NE.toList . fromMaybe def . NE.nonEmpty
+  (backend0, backend1) <- mkConnectedBSBackends
 
-        withMiniCA = withResource
-          do
-            tmpDir <-
-              flip Temp.createTempDirectory "hs-rustls-minica"
-                =<< Temp.getCanonicalTemporaryDirectory
-            for_ ["example.org", "client.example.org"] \domain -> do
-              let cp = Process.proc "minica" ["-domains", domain]
-              void $ Process.readCreateProcess (cp {Process.cwd = Just tmpDir}) ""
-            let miniCAFile = tmpDir </> "minica.pem"
-            miniCACert <- B.readFile miniCAFile
-            let miniCACertKey domain = do
-                  privateKey <- B.readFile $ tmpDir </> domain </> "key.pem"
-                  certificateChain <- B.readFile $ tmpDir </> domain </> "cert.pem"
-                  pure Rustls.CertifiedKey {..}
-            miniCAClientCertKey <- miniCACertKey "client.example.org"
-            miniCAServerCertKey <- miniCACertKey "example.org"
-            pure (tmpDir, MiniCA {..})
-          do \(tmpDir, _) -> Dir.removeDirectoryRecursive tmpDir
+  res <- liftIO . runExceptT $ do
+    ( ( negotiatedServerALPNProtocol,
+        serverTLSVersion,
+        serverCipherSuite,
+        sniHostname,
+        serverPeerCert,
+        serverReceived
+        ),
+      ( negotiatedClientALPNProtocol,
+        clientTLSVersion,
+        clientCipherSuite,
+        clientPeerCert,
+        clientReceived
+        )
+      ) <-
+      ExceptT . E.try $ concurrently (runServer backend0) (runClient backend1)
+    pure TestOutcome {..}
+  tlsLogLines <- liftIO $ reverse <$> readIORef logRef
+  pure (res, tlsLogLines)
+  where
+    recordOutput = fmap reverse . flip execStateT []
+
+withMiniCA :: (IO (FilePath, MiniCA) -> TestTree) -> TestTree
+withMiniCA = withResource
+  do
+    tmpDir <-
+      flip Temp.createTempDirectory "hs-rustls-minica"
+        =<< Temp.getCanonicalTemporaryDirectory
+    for_ ["example.org", "client.example.org"] \domain -> do
+      let cp = Process.proc "minica" ["-domains", domain]
+      void $ Process.readCreateProcess (cp {Process.cwd = Just tmpDir}) ""
+    let miniCAFile = tmpDir </> "minica.pem"
+    miniCACert <- B.readFile miniCAFile
+    let miniCACertKey domain = do
+          privateKey <- B.readFile $ tmpDir </> domain </> "key.pem"
+          certificateChain <- B.readFile $ tmpDir </> domain </> "cert.pem"
+          pure Rustls.CertifiedKey {..}
+    miniCAClientCertKey <- miniCACertKey "client.example.org"
+    miniCAServerCertKey <- miniCACertKey "example.org"
+    pure (tmpDir, MiniCA {..})
+  \(tmpDir, _) -> Dir.removeDirectoryRecursive tmpDir
 
 mkConnectedBSBackends :: MonadIO m => m (Rustls.ByteStringBackend, Rustls.ByteStringBackend)
 mkConnectedBSBackends = liftIO do
