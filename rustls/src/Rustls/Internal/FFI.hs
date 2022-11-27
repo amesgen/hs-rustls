@@ -309,7 +309,7 @@ foreign import ccall "wrapper"
   mkLogCallback :: LogCallback -> IO (FunPtr LogCallback)
 
 newtype LogLevel = LogLevel CSize
-  deriving stock (Eq)
+  deriving stock (Show, Eq)
   deriving newtype (Storable)
 
 data LogParams = LogParams

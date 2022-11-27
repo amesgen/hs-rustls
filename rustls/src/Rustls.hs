@@ -137,6 +137,7 @@ module Rustls
     -- ** Exceptions
     RustlsException,
     isCertError,
+    RustlsLogException (..),
   )
 where
 
@@ -161,11 +162,11 @@ import qualified Data.Text as T
 import qualified Data.Text.Foreign as T
 import Foreign
 import Foreign.C
+import GHC.Conc (reportError)
 import GHC.Generics (Generic)
 import Rustls.Internal
 import Rustls.Internal.FFI (TLSVersion (..))
 import qualified Rustls.Internal.FFI as FFI
-import System.IO (hPutStrLn, stderr)
 import System.IO.Unsafe (unsafePerformIO)
 
 -- $setup
@@ -369,6 +370,9 @@ defaultServerConfigBuilder certifiedKeys =
 
 -- | Allocate a new logging callback, taking a 'LogLevel' and a message.
 --
+-- If it throws an exception, it will be wrapped in a 'RustlsLogException' and
+-- passed to 'reportError'.
+--
 -- 🚫 Make sure that its lifetime encloses those of the 'Connection's which you
 -- configured to use it.
 newLogCallback :: (LogLevel -> Text -> IO ()) -> Acquire LogCallback
@@ -381,13 +385,14 @@ newLogCallback cb = fmap LogCallback . flip mkAcquire freeHaskellFunPtr $
           FFI.LogLevel 3 -> Right LogLevelInfo
           FFI.LogLevel 4 -> Right LogLevelDebug
           FFI.LogLevel 5 -> Right LogLevelTrace
-          FFI.LogLevel l -> Left l
+          l -> Left l
     case logLevel of
-      Left l -> hPutStrLn stderr $ "invalid Rustls log level: " <> show l
+      Left l -> report $ E.SomeException $ RustlsUnknownLogLevel l
       Right logLevel -> do
         msg <- strToText rustlsLogParamsMessage
-        cb logLevel msg `E.catch` \(e :: E.SomeException) ->
-          hPutStrLn stderr $ "Rustls log callback errored: " <> E.displayException e
+        cb logLevel msg `E.catch` report
+  where
+    report = reportError . E.SomeException . RustlsLogException
 
 newConnection ::
   Backend b =>

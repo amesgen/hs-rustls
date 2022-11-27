@@ -114,8 +114,7 @@ instance Show CertifiedKey where
 -- | Assembled configuration for a Rustls client connection.
 data ClientConfig = ClientConfig
   { clientConfigPtr :: ForeignPtr FFI.ClientConfig,
-    -- | A logging callback. If it throws an exception, a note will be printed
-    -- to stderr.
+    -- | A logging callback.
     --
     -- Note that this is a record selector, so you can use it as a setter:
     --
@@ -158,8 +157,7 @@ data ServerConfigBuilder = ServerConfigBuilder
 -- | Assembled configuration for a Rustls server connection.
 data ServerConfig = ServerConfig
   { serverConfigPtr :: ForeignPtr FFI.ServerConfig,
-    -- | A logging callback. If it throws an exception, a note will be printed
-    -- to stderr.
+    -- | A logging callback.
     --
     -- Note that this is a record selector, so you can use it as a setter:
     --
@@ -225,6 +223,15 @@ rethrowR = \case
   r | r == FFI.resultOk -> mempty
   FFI.Result rustlsErrorCode ->
     E.throwIO $ RustlsException rustlsErrorCode
+
+-- | Wrapper for exceptions thrown in a 'LogCallback'.
+newtype RustlsLogException = RustlsLogException E.SomeException
+  deriving stock (Show)
+  deriving anyclass (E.Exception)
+
+data RustlsUnknownLogLevel = RustlsUnknownLogLevel FFI.LogLevel
+  deriving stock (Show)
+  deriving anyclass (E.Exception)
 
 -- | Underlying data sources for Rustls.
 class Backend b where
