@@ -58,6 +58,18 @@
             hooks.ormolu.enable = true;
             tools = { inherit (pkgs) ormolu; };
           };
+          doctests = pkgs.runCommandCC "test-cabal-docspec"
+            {
+              nativeBuildInputs = [
+                pkgs.cabal-docspec
+                (hsPkgs.ghcWithPackages
+                  (ps: lib.attrValues (haskellLib.selectProjectPackages ps)))
+              ];
+            } ''
+            export CABAL_DIR=$(mktemp -d)
+            touch $CABAL_DIR/config $out
+            cabal-docspec --no-cabal-plan $(find ${./.} -name '*.cabal')
+          '';
         };
         devShells.default = hsPkgs.shellFor {
           tools = { cabal = { }; };

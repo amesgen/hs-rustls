@@ -34,8 +34,6 @@ jobs:
         run: nix flake lock --update-input nix-rustls
       - name: Build and test
         run: nix flake check
-      - name: Run docspec
-        run: nix develop --command sh -c 'cabal build all && cabal-docspec'
 
   test-non-nix:
     runs-on: ubuntu-latest
