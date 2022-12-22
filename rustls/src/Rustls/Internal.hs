@@ -22,6 +22,7 @@ import Foreign hiding (void)
 import Foreign.C
 import GHC.Generics (Generic)
 import qualified Network.Socket as NS
+import Rustls.Internal.FFI (ConstPtr (..))
 import qualified Rustls.Internal.FFI as FFI
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -32,7 +33,7 @@ newtype ALPNProtocol = ALPNProtocol {unALPNProtocol :: ByteString}
   deriving stock (Show, Eq, Ord, Generic)
 
 -- | A TLS cipher suite supported by Rustls.
-newtype CipherSuite = CipherSuite (Ptr FFI.SupportedCipherSuite)
+newtype CipherSuite = CipherSuite (ConstPtr FFI.SupportedCipherSuite)
 
 -- | Get the IANA value from a cipher suite. The bytes are interpreted in network order.
 --
@@ -354,7 +355,7 @@ data RunTLSMode = TLSHandshake | TLSRead | TLSWrite
 runTLS :: Connection' -> RunTLSMode -> IO ()
 runTLS c@Connection' {..} = \case
   TLSHandshake -> loopWhileTrue do
-    toBool @CBool <$> FFI.connectionIsHandshaking conn >>= \case
+    toBool @CBool <$> FFI.connectionIsHandshaking (ConstPtr conn) >>= \case
       True -> (||) <$> runWrite <*> runRead
       False -> pure False
   TLSRead -> do
@@ -365,7 +366,7 @@ runTLS c@Connection' {..} = \case
     loopWhileTrue runWrite
   where
     runRead = do
-      wantsRead <- toBool @CBool <$> FFI.connectionWantsRead conn
+      wantsRead <- toBool @CBool <$> FFI.connectionWantsRead (ConstPtr conn)
       when wantsRead do
         interactTLS c Read
         r <- FFI.connectionProcessNewPackets conn
@@ -375,7 +376,7 @@ runTLS c@Connection' {..} = \case
       pure wantsRead
 
     runWrite = do
-      wantsWrite <- toBool @CBool <$> FFI.connectionWantsWrite conn
+      wantsWrite <- toBool @CBool <$> FFI.connectionWantsWrite (ConstPtr conn)
       when wantsWrite $
         interactTLS c Write
       pure wantsWrite
