@@ -58,7 +58,7 @@ jobs:
       - name: Build rustls-ffi
         run: |
           cd ${{ runner.temp }}
-          git clone https://github.com/rustls/rustls-ffi
+          git clone https://github.com/rustls/rustls-ffi -b v0.9.1
           cd rustls-ffi
           make DESTDIR=${{ runner.temp }}/rustls install
       - name: Install CLI dependencies
