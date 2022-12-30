@@ -34,25 +34,7 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs",
-        "rustls-ffi": "rustls-ffi"
-      }
-    },
-    "rustls-ffi": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1654915986,
-        "narHash": "sha256-9+AgNq8+YLSjQQxVZrdPkW1c082EhIDeAbFQfX0MOQA=",
-        "owner": "rustls",
-        "repo": "rustls-ffi",
-        "rev": "3e66fba148a8a97935b49c178ccfd1a71929bf2a",
-        "type": "github"
-      },
-      "original": {
-        "owner": "rustls",
-        "ref": "v0.9.1",
-        "repo": "rustls-ffi",
-        "type": "github"
+        "nixpkgs": "nixpkgs"
       }
     }
   },

@@ -2,18 +2,12 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    rustls-ffi = {
-      url = "github:rustls/rustls-ffi/v0.9.1";
-      flake = false;
-    };
   };
-  outputs = { self, nixpkgs, flake-utils, rustls-ffi }:
+  outputs = { self, nixpkgs, flake-utils }:
     let
-      rustlsFromPkgs = pkgs: pkgs.callPackage (import ./rustls.nix) {
-        src = rustls-ffi;
-      };
+      rustlsFromPkgs = pkgs: pkgs.callPackage (import ./rustls.nix) { };
     in
-    { overlays.default = final: prev: { rustls = rustlsFromPkgs prev; }; } //
+    { overlays.default = _: prev: { rustls = rustlsFromPkgs prev; }; } //
     flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -37,7 +31,8 @@
               name = "updatedLockFile";
               text = ''
                 RUSTLS_FFI=$(mktemp -ud)
-                cp --no-preserve=mode,ownership -r ${rustls-ffi} "$RUSTLS_FFI"
+                cp --no-preserve=mode,ownership -r ${rustls.src} "$RUSTLS_FFI"
+                rm -f "$RUSTLS_FFI/Cargo.lock"
                 ${pkgs.cargo}/bin/cargo update --manifest-path "$RUSTLS_FFI/Cargo.toml"
                 cat "$RUSTLS_FFI/Cargo.lock"
                 rm -r "$RUSTLS_FFI"

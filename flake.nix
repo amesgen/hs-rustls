@@ -24,7 +24,7 @@
           overlays = [
             haskellNix.overlay
             nur.overlay
-            (_: prev: { inherit (pkgs.nur.repos.amesgen) ormolu cabal-docspec; })
+            (_: prev: { inherit (prev.nur.repos.amesgen) ormolu cabal-docspec; })
             nix-rustls.overlays.default
             # ghci(d) needs dynamic libs
             (_: prev: { rustls = prev.rustls.override (_: { buildDylibs = true; }); })
@@ -55,7 +55,11 @@
           (haskellLib.collectChecks haskellLib.isProjectPackage hsPkgs) // {
           pre-commit-check = pre-commit-hooks.lib.${system}.run {
             src = ./.;
-            hooks.ormolu.enable = true;
+            hooks = {
+              ormolu.enable = true;
+              nixpkgs-fmt.enable = true;
+              deadnix.enable = true;
+            };
             tools = { inherit (pkgs) ormolu; };
           };
           doctests = pkgs.runCommandCC "test-cabal-docspec"

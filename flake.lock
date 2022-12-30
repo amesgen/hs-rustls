@@ -550,12 +550,11 @@
         ],
         "nixpkgs": [
           "nixpkgs"
-        ],
-        "rustls-ffi": "rustls-ffi"
+        ]
       },
       "locked": {
         "lastModified": 1,
-        "narHash": "sha256-C3PkPk/KT+9WfyrAVotam5gzQdgoYf6Z5zioBiJ/UjY=",
+        "narHash": "sha256-87FjzBeyEdWTRT/Hrbps13xS7gJU/TdlvT8BWwLaLWA=",
         "path": "./nix-rustls",
         "type": "path"
       },
@@ -860,23 +859,6 @@
         ],
         "nur": "nur",
         "pre-commit-hooks": "pre-commit-hooks"
-      }
-    },
-    "rustls-ffi": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1654915986,
-        "narHash": "sha256-9+AgNq8+YLSjQQxVZrdPkW1c082EhIDeAbFQfX0MOQA=",
-        "owner": "rustls",
-        "repo": "rustls-ffi",
-        "rev": "3e66fba148a8a97935b49c178ccfd1a71929bf2a",
-        "type": "github"
-      },
-      "original": {
-        "owner": "rustls",
-        "ref": "v0.9.1",
-        "repo": "rustls-ffi",
-        "type": "github"
       }
     },
     "stackage": {

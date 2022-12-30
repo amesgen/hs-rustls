@@ -1,23 +1,24 @@
 { lib
 , rustPlatform
-
-, src
-, cargoLock ? ./Cargo.lock
-
+, fetchFromGitHub
 , buildDylibs ? false
-
 , rename
 }:
 
-rustPlatform.buildRustPackage {
+rustPlatform.buildRustPackage rec {
   pname = "rustls-ffi";
   version = "0.9.1";
 
-  inherit src;
-  cargoLock.lockFile = cargoLock;
+  src = fetchFromGitHub {
+    owner = "rustls";
+    repo = "rustls-ffi";
+    rev = "v${version}";
+    hash = "sha256-9+AgNq8+YLSjQQxVZrdPkW1c082EhIDeAbFQfX0MOQA=";
+  };
+  cargoLock.lockFile = ./Cargo.lock;
   patches = lib.optionals buildDylibs [ ./rustls-cdylib.patch ];
   postPatch = ''
-    cp ${cargoLock} Cargo.lock
+    cp ${cargoLock.lockFile} Cargo.lock
   '';
 
   nativeBuildInputs = [ rename ];
