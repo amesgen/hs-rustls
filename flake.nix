@@ -50,7 +50,10 @@
         };
       in
       {
-        packages = { inherit (pkgs) rustls; };
+        packages = {
+          inherit (pkgs) rustls;
+          ci = pkgs.linkFarmFromDrvs "hs-rustls-ci" (lib.attrValues self.checks.${system});
+        };
         checks = flake-utils.lib.flattenTree
           (haskellLib.collectChecks haskellLib.isProjectPackage hsPkgs) // {
           pre-commit-check = pre-commit-hooks.lib.${system}.run {
@@ -92,9 +95,11 @@
   nixConfig = {
     extra-substituters = [
       "https://cache.iog.io"
+      "https://cache.amesgen.de/hs-rustls"
     ];
     extra-trusted-public-keys = [
       "hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ="
+      "hs-rustls:X2YsMA7mFDooGl9ks7N+A/KhbDKNqFL/aCZ2gW9Tbmk="
     ];
   };
 }

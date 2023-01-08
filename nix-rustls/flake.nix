@@ -11,6 +11,7 @@
     flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        inherit (pkgs) lib;
         rustls = rustlsFromPkgs pkgs;
       in
       {
@@ -19,11 +20,11 @@
           inherit rustls;
           rustls-with-dylibs = rustls.override { buildDylibs = true; };
           rustls-static = rustlsFromPkgs pkgs.pkgsStatic;
-        };
-        checks = {
-          inherit (self.packages.${system})
-            rustls
-            rustls-with-dylibs;
+          ci = pkgs.linkFarm "nix-rustls-ci" (lib.mapAttrsToList (k: v: { name = k; path = v; }) {
+            inherit (self.packages.${system})
+              rustls
+              rustls-with-dylibs;
+          });
         };
         devShells.default =
           let
@@ -43,4 +44,12 @@
             packages = [ updatedLockFile ];
           };
       });
+  nixConfig = {
+    extra-substituters = [
+      "https://cache.amesgen.de/hs-rustls"
+    ];
+    extra-trusted-public-keys = [
+      "hs-rustls:X2YsMA7mFDooGl9ks7N+A/KhbDKNqFL/aCZ2gW9Tbmk="
+    ];
+  };
 }

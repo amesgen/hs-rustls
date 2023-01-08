@@ -554,7 +554,7 @@
       },
       "locked": {
         "lastModified": 1,
-        "narHash": "sha256-87FjzBeyEdWTRT/Hrbps13xS7gJU/TdlvT8BWwLaLWA=",
+        "narHash": "sha256-TfmG4uXXS84dHtTvFWjELU4Wc2q1D3NhKvcDHwXVX1g=",
         "path": "./nix-rustls",
         "type": "path"
       },
