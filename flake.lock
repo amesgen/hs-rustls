@@ -279,6 +279,21 @@
         "type": "github"
       }
     },
+    "get-flake": {
+      "locked": {
+        "lastModified": 1644686428,
+        "narHash": "sha256-zkhYsURWFrvEZLkIoBeqFBzSu+cA2u5mo6M8vq9LN7M=",
+        "owner": "ursi",
+        "repo": "get-flake",
+        "rev": "703f15558daa56dfae19d1858bb3046afe68831a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ursi",
+        "repo": "get-flake",
+        "type": "github"
+      }
+    },
     "ghc-8.6.5-iohk": {
       "flake": false,
       "locked": {
@@ -541,26 +556,6 @@
         "owner": "tristanpemble",
         "repo": "nix-nomad",
         "type": "github"
-      }
-    },
-    "nix-rustls": {
-      "inputs": {
-        "flake-utils": [
-          "flake-utils"
-        ],
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1,
-        "narHash": "sha256-TfmG4uXXS84dHtTvFWjELU4Wc2q1D3NhKvcDHwXVX1g=",
-        "path": "./nix-rustls",
-        "type": "path"
-      },
-      "original": {
-        "path": "./nix-rustls",
-        "type": "path"
       }
     },
     "nix2container": {
@@ -851,8 +846,8 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "get-flake": "get-flake",
         "haskellNix": "haskellNix",
-        "nix-rustls": "nix-rustls",
         "nixpkgs": [
           "haskellNix",
           "nixpkgs-unstable"

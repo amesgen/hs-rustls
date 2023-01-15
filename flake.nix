@@ -4,28 +4,24 @@
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
     nur.url = "github:nix-community/nur";
     flake-utils.url = "github:numtide/flake-utils";
+    get-flake.url = "github:ursi/get-flake";
     pre-commit-hooks = {
       url = "github:cachix/pre-commit-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-utils.follows = "flake-utils";
     };
-    nix-rustls = {
-      url = "path:./nix-rustls";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
-    };
   };
-  outputs = { self, nixpkgs, nur, flake-utils, haskellNix, pre-commit-hooks, nix-rustls }:
+  outputs = inputs@{ self, nixpkgs, flake-utils, get-flake, ... }:
     flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
       let
         pkgs = import nixpkgs {
           inherit system;
-          inherit (haskellNix) config;
+          inherit (inputs.haskellNix) config;
           overlays = [
-            haskellNix.overlay
-            nur.overlay
+            inputs.haskellNix.overlay
+            inputs.nur.overlay
             (_: prev: { inherit (prev.nur.repos.amesgen) ormolu cabal-docspec; })
-            nix-rustls.overlays.default
+            (get-flake ./nix-rustls).overlays.default
             # ghci(d) needs dynamic libs
             (_: prev: { rustls = prev.rustls.override (_: { buildDylibs = true; }); })
           ];
@@ -56,7 +52,7 @@
         };
         checks = flake-utils.lib.flattenTree
           (haskellLib.collectChecks haskellLib.isProjectPackage hsPkgs) // {
-          pre-commit-check = pre-commit-hooks.lib.${system}.run {
+          pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
             src = ./.;
             hooks = {
               ormolu.enable = true;
