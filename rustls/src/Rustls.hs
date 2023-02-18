@@ -287,7 +287,7 @@ withRootCertStore certs action =
 --
 -- This is a relatively expensive operation, so it is a good idea to share one
 -- 'ClientConfig' when creating multiple 'Connection's.
-buildClientConfig :: MonadIO m => ClientConfigBuilder -> m ClientConfig
+buildClientConfig :: (MonadIO m) => ClientConfigBuilder -> m ClientConfig
 buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $
   E.bracketOnError
     ( configBuilderNew
@@ -317,7 +317,7 @@ buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $
 --
 -- This is a relatively expensive operation, so it is a good idea to share one
 -- 'ServerConfig' when creating multiple 'Connection's.
-buildServerConfig :: MonadIO m => ServerConfigBuilder -> m ServerConfig
+buildServerConfig :: (MonadIO m) => ServerConfigBuilder -> m ServerConfig
 buildServerConfig ServerConfigBuilder {..} = liftIO . E.mask_ $
   E.bracketOnError
     ( configBuilderNew
@@ -395,7 +395,7 @@ newLogCallback cb = fmap LogCallback . flip mkAcquire freeHaskellFunPtr $
     report = reportError . E.SomeException . RustlsLogException
 
 newConnection ::
-  Backend b =>
+  (Backend b) =>
   b ->
   ForeignPtr config ->
   Maybe LogCallback ->
@@ -436,7 +436,7 @@ newConnection backend configPtr logCallback connectionNew =
 
 -- | Initialize a TLS connection as a client.
 newClientConnection ::
-  Backend b =>
+  (Backend b) =>
   b ->
   ClientConfig ->
   -- | Hostname.
@@ -449,7 +449,7 @@ newClientConnection b ClientConfig {..} hostname =
 
 -- | Initialize a TLS connection as a server.
 newServerConnection ::
-  Backend b =>
+  (Backend b) =>
   b ->
   ServerConfig ->
   Acquire (Connection Server)
@@ -468,7 +468,7 @@ newServerConnection b ServerConfig {..} =
 -- getALPNAndTLSVersion conn =
 --   handshake conn $ (,) <$> getALPNProtocol <*> getTLSVersion
 -- :}
-handshake :: MonadIO m => Connection side -> HandshakeQuery side a -> m a
+handshake :: (MonadIO m) => Connection side -> HandshakeQuery side a -> m a
 handshake conn (HandshakeQuery query) = liftIO do
   withConnection conn \c -> do
     runTLS c TLSHandshake
@@ -537,14 +537,14 @@ getPeerCertificate i = handshakeQuery \Connection' {conn, lenPtr} -> do
 
 -- | Send a @close_notify@ warning alert. This informs the peer that the
 -- connection is being closed.
-sendCloseNotify :: MonadIO m => Connection side -> m ()
+sendCloseNotify :: (MonadIO m) => Connection side -> m ()
 sendCloseNotify conn = liftIO $
   withConnection conn \c@Connection' {conn} -> do
     FFI.connectionSendCloseNotify conn
     runTLS c TLSWrite
 
 -- | Read data from the Rustls 'Connection' into the given buffer.
-readPtr :: MonadIO m => Connection side -> Ptr Word8 -> CSize -> m CSize
+readPtr :: (MonadIO m) => Connection side -> Ptr Word8 -> CSize -> m CSize
 readPtr conn buf len = liftIO $
   withConnection conn \c@Connection' {..} -> do
     runTLS c TLSWrite
@@ -555,7 +555,7 @@ readPtr conn buf len = liftIO $
 -- | Read data from the Rustls 'Connection' into a 'ByteString'. The result will
 -- not be longer than the given length.
 readBS ::
-  MonadIO m =>
+  (MonadIO m) =>
   Connection side ->
   -- | Maximum result length. Note that a buffer of this size will be allocated.
   Int ->
@@ -565,7 +565,7 @@ readBS conn maxLen = liftIO $
     cSizeToInt <$> readPtr conn buf (intToCSize maxLen)
 
 -- | Write data to the Rustls 'Connection' from the given buffer.
-writePtr :: MonadIO m => Connection side -> Ptr Word8 -> CSize -> m CSize
+writePtr :: (MonadIO m) => Connection side -> Ptr Word8 -> CSize -> m CSize
 writePtr conn buf len = liftIO $
   withConnection conn \c@Connection' {..} -> do
     rethrowR =<< FFI.connectionWrite conn buf len lenPtr
@@ -573,7 +573,7 @@ writePtr conn buf len = liftIO $
     peek lenPtr
 
 -- | Write a 'ByteString' to the Rustls 'Connection'.
-writeBS :: MonadIO m => Connection side -> ByteString -> m ()
+writeBS :: (MonadIO m) => Connection side -> ByteString -> m ()
 writeBS conn bs = liftIO $ BU.unsafeUseAsCStringLen bs go
   where
     go (buf, len) = do

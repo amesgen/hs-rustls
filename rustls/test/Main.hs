@@ -139,7 +139,7 @@ data MiniCA = MiniCA
     miniCAClientCertKey, miniCAServerCertKey :: Rustls.CertifiedKey
   }
 
-genTestSetup :: MonadGen m => MiniCA -> m TestSetup
+genTestSetup :: (MonadGen m) => MiniCA -> m TestSetup
 genTestSetup MiniCA {..} = do
   commonALPNProtocols <- genALPNProtocols
   clientConfigRoots <-
@@ -191,7 +191,7 @@ data TestOutcome = TestOutcome
   }
 
 runInMemoryTest ::
-  MonadIO m =>
+  (MonadIO m) =>
   TestSetup ->
   m (Either Rustls.RustlsException TestOutcome, [Text])
 runInMemoryTest TestSetup {..} = do
@@ -289,7 +289,7 @@ withMiniCA = withResource
     pure (tmpDir, MiniCA {..})
   \(tmpDir, _) -> Dir.removeDirectoryRecursive tmpDir
 
-mkConnectedBSBackends :: MonadIO m => m (Rustls.ByteStringBackend, Rustls.ByteStringBackend)
+mkConnectedBSBackends :: (MonadIO m) => m (Rustls.ByteStringBackend, Rustls.ByteStringBackend)
 mkConnectedBSBackends = liftIO do
   (buf0, buf1) <- join (liftA2 (,)) newEmptyTMVarIO
   pure (mkBSBackend buf0 buf1, mkBSBackend buf1 buf0)

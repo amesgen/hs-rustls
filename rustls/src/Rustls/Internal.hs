@@ -291,7 +291,7 @@ newtype Connection (side :: Side) = Connection (MVar Connection')
 type role Connection nominal
 
 data Connection' = forall b.
-  Backend b =>
+  (Backend b) =>
   Connection'
   { conn :: Ptr FFI.Connection,
     backend :: b,
@@ -337,7 +337,7 @@ interactTLS Connection' {..} readOrWrite = E.uninterruptibleMask \restore -> do
   UsingBuffer buf len readPtr <- takeMVar ioMsgRes
   poke readPtr
     =<< restore (readOrWriteBackend buf len)
-    `E.onException` done FFI.ioResultErr
+      `E.onException` done FFI.ioResultErr
   done FFI.ioResultOk
   where
     readOrWriteBackend = case readOrWrite of
