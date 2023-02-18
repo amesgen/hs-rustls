@@ -35,8 +35,7 @@ import Test.Tasty.Hedgehog
 main :: IO ()
 main =
   defaultMain . testGroup "Basic Rustls tests" $
-    [ testCase "Test version" $ Rustls.version @?= "rustls-ffi/0.9.1/rustls/0.20.4",
-      testCase "TLS versions" do
+    [ testCase "TLS versions" do
         S.fromList [Rustls.TLS12, Rustls.TLS13]
           @?= S.fromList (NE.toList Rustls.defaultTLSVersions)
         assertBool "Unexpected default TLS versions" $

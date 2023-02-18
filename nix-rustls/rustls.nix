@@ -7,13 +7,13 @@
 
 rustPlatform.buildRustPackage rec {
   pname = "rustls-ffi";
-  version = "0.9.1";
+  version = "0.9.2";
 
   src = fetchFromGitHub {
     owner = "rustls";
     repo = "rustls-ffi";
     rev = "v${version}";
-    hash = "sha256-9+AgNq8+YLSjQQxVZrdPkW1c082EhIDeAbFQfX0MOQA=";
+    hash = "sha256-urDC/Tm+ZwEbf0orZzKSET5ljQGVcKPGxscctKOM/FU=";
   };
   cargoLock.lockFile = ./Cargo.lock;
   patches = lib.optionals buildDylibs [ ./rustls-cdylib.patch ];

@@ -176,7 +176,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- | Combined version string of Rustls and rustls-ffi.
 --
 -- >>> version
--- "rustls-ffi/0.9.1/rustls/0.20.4"
+-- "rustls-ffi/0.9.2/rustls/0.20.8"
 version :: Text
 version = unsafePerformIO $ alloca \strPtr -> do
   FFI.hsVersion strPtr
