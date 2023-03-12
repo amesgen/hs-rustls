@@ -165,7 +165,7 @@ import Foreign.C
 import GHC.Conc (reportError)
 import GHC.Generics (Generic)
 import Rustls.Internal
-import Rustls.Internal.FFI (TLSVersion (..))
+import Rustls.Internal.FFI (ConstPtr (..), TLSVersion (..))
 import qualified Rustls.Internal.FFI as FFI
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -183,8 +183,8 @@ version = unsafePerformIO $ alloca \strPtr -> do
   strToText =<< peek strPtr
 {-# NOINLINE version #-}
 
-peekNonEmpty :: (Storable a, Coercible a b) => Ptr a -> CSize -> NonEmpty b
-peekNonEmpty as len =
+peekNonEmpty :: (Storable a, Coercible a b) => ConstPtr a -> CSize -> NonEmpty b
+peekNonEmpty (ConstPtr as) len =
   NE.fromList . coerce . unsafePerformIO $ peekArray (cSizeToInt len) as
 
 -- | All 'TLSVersion's supported by Rustls.
@@ -219,31 +219,37 @@ defaultClientConfigBuilder roots =
       clientConfigCertifiedKeys = []
     }
 
-withCertifiedKeys :: [CertifiedKey] -> ((Ptr (Ptr FFI.CertifiedKey), CSize) -> IO a) -> IO a
+withCertifiedKeys :: [CertifiedKey] -> ((ConstPtr (ConstPtr FFI.CertifiedKey), CSize) -> IO a) -> IO a
 withCertifiedKeys certifiedKeys cb =
   withMany withCertifiedKey certifiedKeys \certKeys ->
-    withArrayLen certKeys \len ptr -> cb (ptr, intToCSize len)
+    withArrayLen certKeys \len ptr -> cb (ConstPtr ptr, intToCSize len)
   where
     withCertifiedKey CertifiedKey {..} cb =
-      BU.unsafeUseAsCStringLen certificateChain \(castPtr -> certPtr, intToCSize -> certLen) ->
-        BU.unsafeUseAsCStringLen privateKey \(castPtr -> privPtr, intToCSize -> privLen) ->
+      BU.unsafeUseAsCStringLen certificateChain \(certPtr, certLen) ->
+        BU.unsafeUseAsCStringLen privateKey \(privPtr, privLen) ->
           alloca \certKeyPtr -> do
-            rethrowR =<< FFI.certifiedKeyBuild certPtr certLen privPtr privLen certKeyPtr
+            rethrowR
+              =<< FFI.certifiedKeyBuild
+                (ConstPtr $ castPtr certPtr)
+                (intToCSize certLen)
+                (ConstPtr $ castPtr privPtr)
+                (intToCSize privLen)
+                certKeyPtr
             cb =<< peek certKeyPtr
 
-withALPNProtocols :: [ALPNProtocol] -> ((Ptr FFI.SliceBytes, CSize) -> IO a) -> IO a
+withALPNProtocols :: [ALPNProtocol] -> ((ConstPtr FFI.SliceBytes, CSize) -> IO a) -> IO a
 withALPNProtocols bss cb = do
   withMany withSliceBytes (coerce bss) \bsPtrs ->
-    withArrayLen bsPtrs \len bsPtr -> cb (bsPtr, intToCSize len)
+    withArrayLen bsPtrs \len bsPtr -> cb (ConstPtr bsPtr, intToCSize len)
   where
     withSliceBytes bs cb =
       BU.unsafeUseAsCStringLen bs \(castPtr -> buf, intToCSize -> len) ->
         cb $ FFI.SliceBytes buf len
 
 configBuilderNew ::
-  ( Ptr (Ptr FFI.SupportedCipherSuite) ->
+  ( ConstPtr (ConstPtr FFI.SupportedCipherSuite) ->
     CSize ->
-    Ptr TLSVersion ->
+    ConstPtr TLSVersion ->
     CSize ->
     Ptr (Ptr configBuilder) ->
     IO FFI.Result
@@ -257,12 +263,12 @@ configBuilderNew configBuilderNewCustom cipherSuites tlsVersions = evalContT do
     if null cipherSuites
       then pure (FFI.defaultCipherSuitesLen, FFI.defaultCipherSuites)
       else ContT \cb -> withArrayLen (coerce cipherSuites) \len ptr ->
-        cb (intToCSize len, ptr)
+        cb (intToCSize len, ConstPtr ptr)
   (tlsVersionsLen, tlsVersionsPtr) <-
     if null tlsVersions
       then pure (FFI.defaultVersionsLen, FFI.defaultVersions)
       else ContT \cb -> withArrayLen tlsVersions \len ptr ->
-        cb (intToCSize len, ptr)
+        cb (intToCSize len, ConstPtr ptr)
   liftIO do
     rethrowR
       =<< configBuilderNewCustom
@@ -273,15 +279,21 @@ configBuilderNew configBuilderNewCustom cipherSuites tlsVersions = evalContT do
         builderPtr
     peek builderPtr
 
-withRootCertStore :: [PEMCertificates] -> (Ptr FFI.RootCertStore -> IO a) -> IO a
+withRootCertStore :: [PEMCertificates] -> (ConstPtr FFI.RootCertStore -> IO a) -> IO a
 withRootCertStore certs action =
   E.bracket FFI.rootCertStoreNew FFI.rootCertStoreFree \store -> do
-    let addPEM bs (fromBool @CBool -> strict) = BU.unsafeUseAsCStringLen bs \(buf, len) ->
-          rethrowR =<< FFI.rootCertStoreAddPEM store (castPtr buf) (intToCSize len) strict
+    let addPEM bs (fromBool @CBool -> strict) =
+          BU.unsafeUseAsCStringLen bs \(buf, len) ->
+            rethrowR
+              =<< FFI.rootCertStoreAddPEM
+                store
+                (ConstPtr $ castPtr buf)
+                (intToCSize len)
+                strict
     for_ certs \case
       PEMCertificatesStrict bs -> addPEM bs True
       PEMCertificatesLax bs -> addPEM bs False
-    action store
+    action $ ConstPtr store
 
 -- | Build a 'ClientConfigBuilder' into a 'ClientConfig'.
 --
@@ -300,7 +312,7 @@ buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $
       case clientConfigRoots of
         ClientRootsFromFile rootsPath ->
           withCString rootsPath $
-            rethrowR <=< FFI.clientConfigBuilderLoadRootsFromFile builder
+            rethrowR <=< FFI.clientConfigBuilderLoadRootsFromFile builder . ConstPtr
         ClientRootsInMemory certs ->
           withRootCertStore certs $ rethrowR <=< FFI.clientConfigBuilderUseRoots builder
       withALPNProtocols clientConfigALPNProtocols \(alpnPtr, len) ->
@@ -310,7 +322,8 @@ buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $
         rethrowR =<< FFI.clientConfigBuilderSetCertifiedKey builder ptr len
       let clientConfigLogCallback = Nothing
       clientConfigPtr <-
-        newForeignPtr FFI.clientConfigFree =<< FFI.clientConfigBuilderBuild builder
+        newForeignPtr FFI.clientConfigFree . unConstPtr
+          =<< FFI.clientConfigBuilderBuild builder
       pure ClientConfig {..}
 
 -- | Build a 'ServerConfigBuilder' into a 'ServerConfig'.
@@ -352,7 +365,8 @@ buildServerConfig ServerConfigBuilder {..} = liftIO . E.mask_ $
             FFI.clientCertVerifierOptionalFree
             FFI.serverConfigBuilderSetClientVerifierOptional
       serverConfigPtr <-
-        newForeignPtr FFI.serverConfigFree =<< FFI.serverConfigBuilderBuild builder
+        newForeignPtr FFI.serverConfigFree . unConstPtr
+          =<< FFI.serverConfigBuilderBuild builder
       let serverConfigLogCallback = Nothing
       pure ServerConfig {..}
 
@@ -377,7 +391,7 @@ defaultServerConfigBuilder certifiedKeys =
 -- configured to use it.
 newLogCallback :: (LogLevel -> Text -> IO ()) -> Acquire LogCallback
 newLogCallback cb = fmap LogCallback . flip mkAcquire freeHaskellFunPtr $
-  FFI.mkLogCallback \_ logParamsPtr -> ignoreExceptions do
+  FFI.mkLogCallback \_ (ConstPtr logParamsPtr) -> ignoreExceptions do
     FFI.LogParams {..} <- peek logParamsPtr
     let logLevel = case rustlsLogParamsLevel of
           FFI.LogLevel 1 -> Right LogLevelError
@@ -399,7 +413,7 @@ newConnection ::
   b ->
   ForeignPtr config ->
   Maybe LogCallback ->
-  (Ptr config -> Ptr (Ptr FFI.Connection) -> IO FFI.Result) ->
+  (ConstPtr config -> Ptr (Ptr FFI.Connection) -> IO FFI.Result) ->
   Acquire (Connection side)
 newConnection backend configPtr logCallback connectionNew =
   mkAcquire acquire release
@@ -408,22 +422,26 @@ newConnection backend configPtr logCallback connectionNew =
       conn <-
         alloca \connPtrPtr ->
           withForeignPtr configPtr \cfgPtr -> liftIO do
-            rethrowR =<< connectionNew cfgPtr connPtrPtr
+            rethrowR =<< connectionNew (ConstPtr cfgPtr) connPtrPtr
             peek connPtrPtr
       ioMsgReq <- newEmptyMVar
       ioMsgRes <- newEmptyMVar
       lenPtr <- malloc
-      readWriteCallback <- FFI.mkReadWriteCallback \_ud buf len iPtr -> do
-        putMVar ioMsgRes $ UsingBuffer buf len iPtr
-        Done ioResult <- takeMVar ioMsgReq
-        pure ioResult
-      let freeCallback = freeHaskellFunPtr readWriteCallback
+      let readWriteCallback toBuf _ud buf len iPtr = do
+            putMVar ioMsgRes $ UsingBuffer (toBuf buf) len iPtr
+            Done ioResult <- takeMVar ioMsgReq
+            pure ioResult
+      readCallback <- FFI.mkReadCallback $ readWriteCallback id
+      writeCallback <- FFI.mkWriteCallback $ readWriteCallback unConstPtr
+      let freeCallback = do
+            freeHaskellFunPtr readCallback
+            freeHaskellFunPtr writeCallback
           interact = forever do
             Request readOrWrite <- takeMVar ioMsgReq
             let readOrWriteTls = case readOrWrite of
-                  Read -> FFI.connectionReadTls
-                  Write -> FFI.connectionWriteTls
-            _ <- readOrWriteTls conn readWriteCallback nullPtr lenPtr
+                  Read -> flip FFI.connectionReadTls readCallback
+                  Write -> flip FFI.connectionWriteTls writeCallback
+            _ <- readOrWriteTls conn nullPtr lenPtr
             putMVar ioMsgRes DoneFFI
       interactThread <- forkFinally interact (const freeCallback)
       for_ logCallback $ FFI.connectionSetLogCallback conn . unLogCallback
@@ -444,8 +462,8 @@ newClientConnection ::
   Acquire (Connection Client)
 newClientConnection b ClientConfig {..} hostname =
   newConnection b clientConfigPtr clientConfigLogCallback \configPtr connPtrPtr ->
-    withCString (T.unpack hostname) \hostnamePtr ->
-      FFI.clientConnectionNew configPtr hostnamePtr connPtrPtr
+    T.withCString hostname \hostnamePtr ->
+      FFI.clientConnectionNew configPtr (ConstPtr hostnamePtr) connPtrPtr
 
 -- | Initialize a TLS connection as a server.
 newServerConnection ::
@@ -478,8 +496,8 @@ handshake conn (HandshakeQuery query) = liftIO do
 getALPNProtocol :: HandshakeQuery side (Maybe ALPNProtocol)
 getALPNProtocol = handshakeQuery \Connection' {conn, lenPtr} ->
   alloca \bufPtrPtr -> do
-    FFI.connectionGetALPNProtocol conn bufPtrPtr lenPtr
-    bufPtr <- peek bufPtrPtr
+    FFI.connectionGetALPNProtocol (ConstPtr conn) bufPtrPtr lenPtr
+    ConstPtr bufPtr <- peek bufPtrPtr
     len <- peek lenPtr
     !alpn <- B.packCStringLen (castPtr bufPtr, cSizeToInt len)
     pure $ if B.null alpn then Nothing else Just $ ALPNProtocol alpn
@@ -487,7 +505,7 @@ getALPNProtocol = handshakeQuery \Connection' {conn, lenPtr} ->
 -- | Get the negotiated TLS protocol version.
 getTLSVersion :: HandshakeQuery side TLSVersion
 getTLSVersion = handshakeQuery \Connection' {conn} -> do
-  !ver <- FFI.connectionGetProtocolVersion conn
+  !ver <- FFI.connectionGetProtocolVersion (ConstPtr conn)
   when (unTLSVersion ver == 0) $
     fail "internal rustls error: no protocol version negotiated"
   pure ver
@@ -495,8 +513,8 @@ getTLSVersion = handshakeQuery \Connection' {conn} -> do
 -- | Get the negotiated cipher suite.
 getCipherSuite :: HandshakeQuery side CipherSuite
 getCipherSuite = handshakeQuery \Connection' {conn} -> do
-  !cipherSuite <- FFI.connectionGetNegotiatedCipherSuite conn
-  when (cipherSuite == nullPtr) $
+  !cipherSuite <- FFI.connectionGetNegotiatedCipherSuite (ConstPtr conn)
+  when (cipherSuite == ConstPtr nullPtr) $
     fail "internal rustls error: no cipher suite negotiated"
   pure $ CipherSuite cipherSuite
 
@@ -504,7 +522,7 @@ getCipherSuite = handshakeQuery \Connection' {conn} -> do
 getSNIHostname :: HandshakeQuery Server (Maybe Text)
 getSNIHostname = handshakeQuery \Connection' {conn, lenPtr} ->
   let go n = allocaBytes (cSizeToInt n) \bufPtr -> do
-        res <- FFI.serverConnectionGetSNIHostname conn bufPtr n lenPtr
+        res <- FFI.serverConnectionGetSNIHostname (ConstPtr conn) bufPtr n lenPtr
         if res == FFI.resultInsufficientSize
           then go (2 * n)
           else do
@@ -525,12 +543,12 @@ newtype DERCertificate = DERCertificate {unDERCertificate :: ByteString}
 -- 'Nothing'.
 getPeerCertificate :: CSize -> HandshakeQuery side (Maybe DERCertificate)
 getPeerCertificate i = handshakeQuery \Connection' {conn, lenPtr} -> do
-  certPtr <- FFI.connectionGetPeerCertificate conn i
-  if certPtr == nullPtr
+  certPtr <- FFI.connectionGetPeerCertificate (ConstPtr conn) i
+  if certPtr == ConstPtr nullPtr
     then pure Nothing
     else alloca \bufPtrPtr -> do
       rethrowR =<< FFI.certificateGetDER certPtr bufPtrPtr lenPtr
-      bufPtr <- peek bufPtrPtr
+      ConstPtr bufPtr <- peek bufPtrPtr
       len <- cSizeToInt <$> peek lenPtr
       !bs <- B.packCStringLen (castPtr bufPtr, len)
       pure $ Just $ DERCertificate bs
