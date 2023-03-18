@@ -13,7 +13,7 @@
 --
 -- == Client example
 --
--- Suppose you have alread opened a 'Network.Socket.Socket' to @example.org@,
+-- Suppose you have already opened a 'Network.Socket.Socket' to @example.org@,
 -- port 443 (see e.g. the examples at "Network.Socket"). This small example
 -- showcases how to perform a simple HTTP GET request:
 --
