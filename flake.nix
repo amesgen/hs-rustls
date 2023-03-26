@@ -31,7 +31,7 @@
         projectPackages = [ "rustls" "http-client-rustls" ];
         hsPkgs = haskell-nix.cabalProject {
           src = ./.;
-          compiler-nix-name = "ghc925";
+          compiler-nix-name = "ghc927";
           modules = [
             { packages = lib.genAttrs projectPackages (_: { ghcOptions = [ "-Werror" ]; }); }
             {
@@ -91,10 +91,12 @@
   nixConfig = {
     extra-substituters = [
       "https://cache.iog.io"
+      "https://cache.zw3rk.com"
       "https://cache.amesgen.de/hs-rustls"
     ];
     extra-trusted-public-keys = [
       "hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ="
+      "loony-tools:pr9m4BkM/5/eSTZlkQyRt57Jz7OMBxNSUiMC4FkcNfk="
       "hs-rustls:X2YsMA7mFDooGl9ks7N+A/KhbDKNqFL/aCZ2gW9Tbmk="
     ];
   };
