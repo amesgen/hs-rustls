@@ -8,12 +8,21 @@
 -- newRustlsManager :: IO HTTP.Manager
 -- newRustlsManager = do
 --   clientConfig <-
---     Rustls.buildClientConfig $ Rustls.defaultClientConfigBuilder roots
+--     Rustls.buildClientConfig $
+--       Rustls.defaultClientConfigBuilder serverCertVerifier
 --   HTTP.newManager $ rustlsManagerSettings clientConfig
 --   where
 --     -- For now, rustls-ffi does not provide a built-in way to access
 --     -- the OS certificate store.
---     roots = Rustls.ClientRootsFromFile "/etc/ssl/certs/ca-certificates.crt"
+--     serverCertVerifier =
+--       Rustls.ServerCertVerifier
+--         { Rustls.serverCertVerifierCertificates =
+--             pure $
+--               Rustls.PemCertificatesFromFile
+--                 "/etc/ssl/certs/ca-certificates.crt"
+--                 Rustls.PEMCertificateParsingStrict,
+--           Rustls.serverCertVerifierCRLs = []
+--         }
 -- >>> :}
 --
 -- >>> :{

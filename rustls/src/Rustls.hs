@@ -27,7 +27,8 @@
 --   -- It is encouraged to share a single `clientConfig` when creating multiple
 --   -- TLS connections.
 --   clientConfig <-
---     Rustls.buildClientConfig $ Rustls.defaultClientConfigBuilder roots
+--     Rustls.buildClientConfig $
+--       Rustls.defaultClientConfigBuilder serverCertVerifier
 --   let newConnection =
 --         Rustls.newClientConnection socket clientConfig "example.org"
 --   withAcquire newConnection $ \conn -> do
@@ -37,7 +38,15 @@
 --   where
 --     -- For now, rustls-ffi does not provide a built-in way to access
 --     -- the OS certificate store.
---     roots = Rustls.ClientRootsFromFile "/etc/ssl/certs/ca-certificates.crt"
+--     serverCertVerifier =
+--       Rustls.ServerCertVerifier
+--         { Rustls.serverCertVerifierCertificates =
+--             pure $
+--               Rustls.PemCertificatesFromFile
+--                 "/etc/ssl/certs/ca-certificates.crt"
+--                 Rustls.PEMCertificateParsingStrict,
+--           Rustls.serverCertVerifierCRLs = []
+--         }
 -- :}
 --
 -- == Using 'Acquire'
@@ -59,8 +68,7 @@ module Rustls
     -- ** Builder
     ClientConfigBuilder (..),
     defaultClientConfigBuilder,
-    ClientRoots (..),
-    PEMCertificates (..),
+    ServerCertVerifier (..),
 
     -- ** Config
     ClientConfig,
@@ -76,6 +84,7 @@ module Rustls
     ServerConfigBuilder (..),
     defaultServerConfigBuilder,
     ClientCertVerifier (..),
+    ClientCertVerifierPolicy (..),
 
     -- ** Config
     ServerConfig,
@@ -123,8 +132,11 @@ module Rustls
 
     -- ** Types
     ALPNProtocol (..),
+    PEMCertificates (..),
+    PEMCertificateParsing (..),
     CertifiedKey (..),
     DERCertificate (..),
+    CertificateRevocationList (..),
     TLSVersion (TLS12, TLS13, unTLSVersion),
     defaultTLSVersions,
     allTLSVersions,
@@ -144,7 +156,7 @@ where
 import Control.Concurrent (forkFinally, killThread)
 import Control.Concurrent.MVar
 import qualified Control.Exception as E
-import Control.Monad (forever, when, (<=<))
+import Control.Monad (forever, void, when)
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Cont
 import Control.Monad.Trans.Reader
@@ -154,13 +166,15 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Internal as BI
 import qualified Data.ByteString.Unsafe as BU
 import Data.Coerce
-import Data.Foldable (for_)
+import Data.Foldable (for_, toList)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Foreign as T
-import Foreign
+import Data.Traversable (for)
+import Data.Word
+import Foreign hiding (void)
 import Foreign.C
 import GHC.Conc (reportError)
 import GHC.Generics (Generic)
@@ -176,7 +190,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- | Combined version string of Rustls and rustls-ffi.
 --
 -- >>> version
--- "rustls-ffi/0.9.2/rustls/0.20.8"
+-- "rustls-ffi/0.13.0/rustls/0.23.4"
 version :: Text
 version = unsafePerformIO $ alloca \strPtr -> do
   FFI.hsVersion strPtr
@@ -208,12 +222,12 @@ defaultCipherSuites = peekNonEmpty FFI.defaultCipherSuites FFI.defaultCipherSuit
 {-# NOINLINE defaultCipherSuites #-}
 
 -- | A 'ClientConfigBuilder' with good defaults.
-defaultClientConfigBuilder :: ClientRoots -> ClientConfigBuilder
-defaultClientConfigBuilder roots =
+defaultClientConfigBuilder :: ServerCertVerifier -> ClientConfigBuilder
+defaultClientConfigBuilder serverCertVerifier =
   ClientConfigBuilder
-    { clientConfigTLSVersions = [],
+    { clientConfigServerCertVerifier = serverCertVerifier,
+      clientConfigTLSVersions = [],
       clientConfigCipherSuites = [],
-      clientConfigRoots = roots,
       clientConfigALPNProtocols = [],
       clientConfigEnableSNI = True,
       clientConfigCertifiedKeys = []
@@ -280,20 +294,37 @@ configBuilderNew configBuilderNewCustom cipherSuites tlsVersions = evalContT do
     peek builderPtr
 
 withRootCertStore :: [PEMCertificates] -> (ConstPtr FFI.RootCertStore -> IO a) -> IO a
-withRootCertStore certs action =
-  E.bracket FFI.rootCertStoreNew FFI.rootCertStoreFree \store -> do
-    let addPEM bs (fromBool @CBool -> strict) =
-          BU.unsafeUseAsCStringLen bs \(buf, len) ->
-            rethrowR
-              =<< FFI.rootCertStoreAddPEM
-                store
-                (ConstPtr $ castPtr buf)
-                (intToCSize len)
-                strict
-    for_ certs \case
-      PEMCertificatesStrict bs -> addPEM bs True
-      PEMCertificatesLax bs -> addPEM bs False
-    action $ ConstPtr store
+withRootCertStore certs = runContT do
+  storeBuilder <-
+    ContT $ E.bracket FFI.rootCertStoreBuilderNew FFI.rootCertStoreBuilderFree
+  let isStrict :: PEMCertificateParsing -> CBool
+      isStrict =
+        fromBool @CBool . \case
+          PEMCertificateParsingStrict -> True
+          PEMCertificateParsingLax -> False
+  for_ certs \case
+    PEMCertificatesInMemory bs parsing -> do
+      (buf, len) <- ContT $ BU.unsafeUseAsCStringLen bs
+      liftIO $
+        rethrowR
+          =<< FFI.rootCertStoreBuilderAddPem
+            storeBuilder
+            (ConstPtr $ castPtr buf)
+            (intToCSize len)
+            (isStrict parsing)
+    PemCertificatesFromFile path parsing -> do
+      pathPtr <- ContT $ withCString path
+      liftIO $
+        rethrowR
+          =<< FFI.rootCertStoreBuilderLoadRootsFromFile
+            storeBuilder
+            (ConstPtr pathPtr)
+            (isStrict parsing)
+  storePtr <- ContT alloca
+  let buildRootCertStore = do
+        liftIO $ rethrowR =<< FFI.rootCertStoreBuilderBuild storeBuilder storePtr
+        peek storePtr
+  ContT $ E.bracket buildRootCertStore FFI.rootCertStoreFree
 
 -- | Build a 'ClientConfigBuilder' into a 'ClientConfig'.
 --
@@ -309,12 +340,30 @@ buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $
     )
     FFI.clientConfigBuilderFree
     \builder -> do
-      case clientConfigRoots of
-        ClientRootsFromFile rootsPath ->
-          withCString rootsPath $
-            rethrowR <=< FFI.clientConfigBuilderLoadRootsFromFile builder . ConstPtr
-        ClientRootsInMemory certs ->
-          withRootCertStore certs $ rethrowR <=< FFI.clientConfigBuilderUseRoots builder
+      evalContT do
+        let ServerCertVerifier {..} = clientConfigServerCertVerifier
+        rootCertStore <-
+          ContT $ withRootCertStore $ toList serverCertVerifierCertificates
+        scvb <-
+          ContT $
+            E.bracket
+              (FFI.webPkiServerCertVerifierBuilderNew rootCertStore)
+              FFI.webPkiServerCertVerifierBuilderFree
+        crls :: [CStringLen] <-
+          for serverCertVerifierCRLs $
+            ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
+        liftIO $ for_ crls \(ptr, len) ->
+          FFI.webPkiServerCertVerifierBuilderAddCrl
+            scvb
+            (ConstPtr (castPtr ptr))
+            (intToCSize len)
+        scvPtr <- ContT alloca
+        let buildScv = do
+              rethrowR =<< FFI.webPkiServerCertVerifierBuilderBuild scvb scvPtr
+              peek scvPtr
+        scv <- ContT $ E.bracket buildScv FFI.serverCertVerifierFree
+        liftIO $ FFI.clientConfigBuilderSetServerVerifier builder (ConstPtr scv)
+
       withALPNProtocols clientConfigALPNProtocols \(alpnPtr, len) ->
         rethrowR =<< FFI.clientConfigBuilderSetALPNProtocols builder alpnPtr len
       FFI.clientConfigBuilderSetEnableSNI builder (fromBool @CBool clientConfigEnableSNI)
@@ -348,22 +397,32 @@ buildServerConfig ServerConfigBuilder {..} = liftIO . E.mask_ $
           (fromBool @CBool serverConfigIgnoreClientOrder)
       withCertifiedKeys (NE.toList serverConfigCertifiedKeys) \(ptr, len) ->
         rethrowR =<< FFI.serverConfigBuilderSetCertifiedKeys builder ptr len
-      let setBuilderCCV certs ccvNew ccvFree setCCV =
-            withRootCertStore certs \roots ->
-              E.bracket (ccvNew roots) ccvFree $ setCCV builder
-      for_ serverConfigClientCertVerifier \case
-        ClientCertVerifier certs -> do
-          setBuilderCCV
-            certs
-            FFI.clientCertVerifierNew
-            FFI.clientCertVerifierFree
-            FFI.serverConfigBuilderSetClientVerifier
-        ClientCertVerifierOptional certs -> do
-          setBuilderCCV
-            certs
-            FFI.clientCertVerifierOptionalNew
-            FFI.clientCertVerifierOptionalFree
-            FFI.serverConfigBuilderSetClientVerifierOptional
+      for_ serverConfigClientCertVerifier \ClientCertVerifier {..} -> evalContT do
+        roots <- ContT $ withRootCertStore $ NE.toList clientCertVerifierCertificates
+        ccvb <-
+          ContT $
+            E.bracket
+              (FFI.webPkiClientCertVerifierBuilderNew roots)
+              FFI.webPkiClientCertVerifierBuilderFree
+        crls :: [CStringLen] <-
+          for clientCertVerifierCRLs $
+            ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
+        liftIO do
+          case clientCertVerifierPolicy of
+            AllowAnyAuthenticatedClient -> pure ()
+            AllowAnyAnonymousOrAuthenticatedClient ->
+              rethrowR =<< FFI.webPkiClientCertVerifierBuilderAllowUnauthenticated ccvb
+          for_ crls \(ptr, len) ->
+            FFI.webPkiClientCertVerifierBuilderAddCrl
+              ccvb
+              (ConstPtr (castPtr ptr))
+              (intToCSize len)
+        ccvPtr <- ContT alloca
+        let buildCcv = do
+              rethrowR =<< FFI.webPkiClientCertVerifierBuilderBuild ccvb ccvPtr
+              peek ccvPtr
+        ccv <- ContT $ E.bracket buildCcv FFI.clientCertVerifierFree
+        liftIO $ FFI.serverConfigBuilderSetClientVerifier builder (ConstPtr ccv)
       serverConfigPtr <-
         newForeignPtr FFI.serverConfigFree . unConstPtr
           =<< FFI.serverConfigBuilderBuild builder
@@ -489,7 +548,7 @@ newServerConnection b ServerConfig {..} =
 handshake :: (MonadIO m) => Connection side -> HandshakeQuery side a -> m a
 handshake conn (HandshakeQuery query) = liftIO do
   withConnection conn \c -> do
-    runTLS c TLSHandshake
+    _ <- completePriorIO c
     runReaderT query c
 
 -- | Get the negotiated ALPN protocol, if any.
@@ -559,14 +618,17 @@ sendCloseNotify :: (MonadIO m) => Connection side -> m ()
 sendCloseNotify conn = liftIO $
   withConnection conn \c@Connection' {conn} -> do
     FFI.connectionSendCloseNotify conn
-    runTLS c TLSWrite
+    void $ completeIO c
 
 -- | Read data from the Rustls 'Connection' into the given buffer.
 readPtr :: (MonadIO m) => Connection side -> Ptr Word8 -> CSize -> m CSize
 readPtr conn buf len = liftIO $
   withConnection conn \c@Connection' {..} -> do
-    runTLS c TLSWrite
-    runTLS c TLSRead
+    completePriorIO c
+    loopWhileTrue $
+      getWantsRead c >>= \case
+        True -> (NotEOF ==) <$> completeIO c
+        False -> pure False
     rethrowR =<< FFI.connectionRead conn buf len lenPtr
     peek lenPtr
 
@@ -586,8 +648,9 @@ readBS conn maxLen = liftIO $
 writePtr :: (MonadIO m) => Connection side -> Ptr Word8 -> CSize -> m CSize
 writePtr conn buf len = liftIO $
   withConnection conn \c@Connection' {..} -> do
+    completePriorIO c
     rethrowR =<< FFI.connectionWrite conn buf len lenPtr
-    runTLS c TLSWrite
+    _ <- completeIO c
     peek lenPtr
 
 -- | Write a 'ByteString' to the Rustls 'Connection'.

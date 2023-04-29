@@ -44,12 +44,4 @@
             packages = [ updatedLockFile ];
           };
       });
-  nixConfig = {
-    extra-substituters = [
-      "https://cache.amesgen.de/hs-rustls"
-    ];
-    extra-trusted-public-keys = [
-      "hs-rustls:X2YsMA7mFDooGl9ks7N+A/KhbDKNqFL/aCZ2gW9Tbmk="
-    ];
-  };
 }

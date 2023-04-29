@@ -25,7 +25,7 @@ If you want to depend on this library in another package, you have to make sure 
 Make sure to have [Cargo](https://doc.rust-lang.org/stable/cargo/getting-started/installation.html) installed. Then, clone and install rustls-ffi:
 
 ```bash
-git clone https://github.com/rustls/rustls-ffi -b v0.9.2
+git clone https://github.com/rustls/rustls-ffi -b v0.13.0
 cd rustls-ffi
 make DESTDIR=/path/to/some/dir install
 ```

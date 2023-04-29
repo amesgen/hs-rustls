@@ -7,7 +7,8 @@
     get-flake.url = "github:ursi/get-flake";
     pre-commit-hooks = {
       url = "github:cachix/pre-commit-hooks.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
+      # TODO the nixpkgs from haskellNix is too old
+      # inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-utils.follows = "flake-utils";
     };
   };
@@ -31,7 +32,7 @@
         projectPackages = [ "rustls" "http-client-rustls" ];
         hsPkgs = haskell-nix.cabalProject {
           src = ./.;
-          compiler-nix-name = "ghc927";
+          compiler-nix-name = "ghc98";
           modules = [
             { packages = lib.genAttrs projectPackages (_: { ghcOptions = [ "-Werror" ]; }); }
             {
@@ -76,7 +77,6 @@
         };
         devShells.default = hsPkgs.shellFor {
           tools = { cabal = { }; };
-          exactDeps = true;
           buildInputs = [
             pkgs.minica
             pkgs.miniserve
@@ -92,12 +92,10 @@
     extra-substituters = [
       "https://cache.iog.io"
       "https://cache.zw3rk.com"
-      "https://cache.amesgen.de/hs-rustls"
     ];
     extra-trusted-public-keys = [
       "hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ="
       "loony-tools:pr9m4BkM/5/eSTZlkQyRt57Jz7OMBxNSUiMC4FkcNfk="
-      "hs-rustls:X2YsMA7mFDooGl9ks7N+A/KhbDKNqFL/aCZ2gW9Tbmk="
     ];
   };
 }

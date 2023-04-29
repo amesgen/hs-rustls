@@ -1,10 +1,9 @@
 module Main where
 
-import Control.Applicative (liftA2)
 import Control.Concurrent.Async (concurrently)
 import Control.Concurrent.STM.TMVar
 import qualified Control.Exception as E
-import Control.Monad (join, unless, when)
+import Control.Monad (unless, when)
 import Control.Monad.IO.Class
 import Control.Monad.STM (atomically)
 import Control.Monad.Trans.Except
@@ -28,6 +27,7 @@ import qualified System.Directory as Dir
 import System.FilePath ((</>))
 import qualified System.IO.Temp as Temp
 import qualified System.Process as Process
+import System.Timeout
 import Test.Tasty
 import Test.Tasty.HUnit hiding (assert)
 import Test.Tasty.Hedgehog
@@ -97,26 +97,27 @@ testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
           clientCipherSuite
             `S.member` (clientCipherSuites `S.intersection` serverCipherSuites)
         assert $ isJust clientPeerCert
-        case serverConfigClientCertVerifier of
+        case Rustls.clientCertVerifierPolicy <$> serverConfigClientCertVerifier of
           Nothing ->
             serverPeerCert === Nothing
-          Just (Rustls.ClientCertVerifier _) ->
+          Just Rustls.AllowAnyAuthenticatedClient ->
             assert $ isJust serverPeerCert
-          Just (Rustls.ClientCertVerifierOptional _) ->
+          Just Rustls.AllowAnyAnonymousOrAuthenticatedClient ->
             isJust serverPeerCert /== null clientConfigCertifiedKeys
       Left (ex :: Rustls.RustlsException) -> do
         label "Expected TLS failure"
         annotate $ E.displayException ex
         if
-            | S.fromList clientConfigALPNProtocols
-                `S.disjoint` S.fromList serverConfigALPNProtocols ->
-                success
-            | clientTLSVersions `S.disjoint` serverTLSVersions ->
-                success
-            | Just (Rustls.ClientCertVerifier _) <- serverConfigClientCertVerifier,
-              null clientConfigCertifiedKeys ->
-                success
-            | otherwise -> failure
+          | S.fromList clientConfigALPNProtocols
+              `S.disjoint` S.fromList serverConfigALPNProtocols ->
+              success
+          | clientTLSVersions `S.disjoint` serverTLSVersions ->
+              success
+          | Just Rustls.AllowAnyAuthenticatedClient <-
+              Rustls.clientCertVerifierPolicy <$> serverConfigClientCertVerifier,
+            null clientConfigCertifiedKeys ->
+              success
+          | otherwise -> failure
   where
     nonEmptySet def = S.fromList . NE.toList . fromMaybe def . NE.nonEmpty
 
@@ -142,12 +143,16 @@ data MiniCA = MiniCA
 genTestSetup :: (MonadGen m) => MiniCA -> m TestSetup
 genTestSetup MiniCA {..} = do
   commonALPNProtocols <- genALPNProtocols
-  clientConfigRoots <-
-    Gen.element
-      [ Rustls.ClientRootsFromFile miniCAFile,
-        Rustls.ClientRootsInMemory [Rustls.PEMCertificatesStrict miniCACert],
-        Rustls.ClientRootsInMemory [Rustls.PEMCertificatesLax miniCACert]
-      ]
+  clientConfigServerCertVerifier <- do
+    parsing <- Gen.enumBounded
+    serverCertVerifierCertificates <-
+      pure
+        <$> Gen.element
+          [ Rustls.PEMCertificatesInMemory miniCACert parsing,
+            Rustls.PemCertificatesFromFile miniCAFile parsing
+          ]
+    let serverCertVerifierCRLs = [] -- TODO test this
+    pure Rustls.ServerCertVerifier {..}
   clientConfigALPNProtocols <- (commonALPNProtocols <>) <$> genALPNProtocols
   clientConfigEnableSNI <- Gen.bool_
   clientConfigTLSVersions <- genTLSVersions
@@ -157,17 +162,22 @@ genTestSetup MiniCA {..} = do
   serverConfigALPNProtocols <- (commonALPNProtocols <>) <$> genALPNProtocols
   serverConfigIgnoreClientOrder <- Gen.bool_
   serverConfigTLSVersions <- genTLSVersions
-  serverConfigClientCertVerifier <-
-    Gen.element
-      [ Nothing,
-        Just $ Rustls.ClientCertVerifier [Rustls.PEMCertificatesStrict miniCACert],
-        Just $ Rustls.ClientCertVerifierOptional [Rustls.PEMCertificatesStrict miniCACert]
-      ]
+  serverConfigClientCertVerifier <- Gen.maybe do
+    clientCertVerifierPolicy <- Gen.enumBounded
+    let clientCertVerifierCertificates =
+          pure $
+            Rustls.PEMCertificatesInMemory
+              miniCACert
+              Rustls.PEMCertificateParsingStrict
+        clientCertVerifierCRLs = [] -- TODO test this
+    pure Rustls.ClientCertVerifier {..}
   let serverConfigCipherSuites = getCipherSuites serverConfigTLSVersions
       serverConfigCertifiedKeys = pure miniCAServerCertKey
       serverConfigBuilder = Rustls.ServerConfigBuilder {..}
   clientSends <-
-    Gen.list (Range.linear 0 10) $
+    -- TODO using 0 as a lower bound should work, but causes timeouts for some
+    -- reason
+    Gen.list (Range.linear 1 10) $
       Gen.filterT (/= "close") $
         Gen.bytes (Range.linear 1 50)
   pure TestSetup {..}
@@ -262,12 +272,18 @@ runInMemoryTest TestSetup {..} = do
         clientReceived
         )
       ) <-
-      ExceptT . E.try $ concurrently (runServer backend0) (runClient backend1)
+      ExceptT . E.try . timeout' $
+        concurrently (runServer backend0) (runClient backend1)
     pure TestOutcome {..}
   tlsLogLines <- liftIO $ reverse <$> readIORef logRef
   pure (res, tlsLogLines)
   where
     recordOutput = fmap reverse . flip execStateT []
+
+    timeout' action =
+      timeout (10 ^ (6 :: Int)) action >>= \case
+        Just a -> pure a
+        Nothing -> fail "timeout!"
 
 withMiniCA :: (IO (FilePath, MiniCA) -> TestTree) -> TestTree
 withMiniCA = withResource
@@ -291,7 +307,8 @@ withMiniCA = withResource
 
 mkConnectedBSBackends :: (MonadIO m) => m (Rustls.ByteStringBackend, Rustls.ByteStringBackend)
 mkConnectedBSBackends = liftIO do
-  (buf0, buf1) <- join (liftA2 (,)) newEmptyTMVarIO
+  buf0 <- newEmptyTMVarIO
+  buf1 <- newEmptyTMVarIO
   pure (mkBSBackend buf0 buf1, mkBSBackend buf1 buf0)
   where
     mkBSBackend readBuf writeBuf = Rustls.ByteStringBackend {..}

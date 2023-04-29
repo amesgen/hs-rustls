@@ -7,19 +7,18 @@
 
 rustPlatform.buildRustPackage rec {
   pname = "rustls-ffi";
-  version = "0.9.2";
+  version = "0.13.0";
 
   src = fetchFromGitHub {
     owner = "rustls";
     repo = "rustls-ffi";
     rev = "v${version}";
-    hash = "sha256-urDC/Tm+ZwEbf0orZzKSET5ljQGVcKPGxscctKOM/FU=";
+    hash = "sha256-Bc9bVZ2pDsG118l/SlElZpgh9F1JEgPF8LzBX7d4mhE=";
   };
-  cargoLock.lockFile = ./Cargo.lock;
+
+  cargoHash = "sha256-gDQ9AFrJuV7SrzKCAHQBkKj6clXuPLO0DHhnvcBqRLs=";
+
   patches = lib.optionals buildDylibs [ ./rustls-cdylib.patch ];
-  postPatch = ''
-    cp ${cargoLock.lockFile} Cargo.lock
-  '';
 
   nativeBuildInputs = [ rename ];
 
