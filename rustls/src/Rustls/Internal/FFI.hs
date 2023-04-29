@@ -355,7 +355,7 @@ foreign import capi unsafe "rustls.h rustls_connection_get_protocol_version"
 foreign import capi unsafe "rustls.h rustls_connection_get_negotiated_ciphersuite"
   connectionGetNegotiatedCipherSuite :: ConstPtr Connection -> IO (ConstPtr SupportedCipherSuite)
 
-foreign import capi unsafe "rustls.h rustls_server_connection_get_sni_hostname"
+foreign import capi unsafe "rustls.h rustls_server_connection_get_server_name"
   serverConnectionGetSNIHostname :: ConstPtr Connection -> Ptr Word8 -> CSize -> Ptr CSize -> IO Result
 
 foreign import capi unsafe "rustls.h rustls_connection_get_peer_certificate"
