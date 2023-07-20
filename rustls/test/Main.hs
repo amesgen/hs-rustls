@@ -97,26 +97,27 @@ testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
           clientCipherSuite
             `S.member` (clientCipherSuites `S.intersection` serverCipherSuites)
         assert $ isJust clientPeerCert
-        case serverConfigClientCertVerifier of
+        case Rustls.clientCertVerifierPolicy <$> serverConfigClientCertVerifier of
           Nothing ->
             serverPeerCert === Nothing
-          Just (Rustls.ClientCertVerifier _) ->
+          Just Rustls.AllowAnyAuthenticatedClient ->
             assert $ isJust serverPeerCert
-          Just (Rustls.ClientCertVerifierOptional _) ->
+          Just Rustls.AllowAnyAnonymousOrAuthenticatedClient ->
             isJust serverPeerCert /== null clientConfigCertifiedKeys
       Left (ex :: Rustls.RustlsException) -> do
         label "Expected TLS failure"
         annotate $ E.displayException ex
         if
-            | S.fromList clientConfigALPNProtocols
-                `S.disjoint` S.fromList serverConfigALPNProtocols ->
-                success
-            | clientTLSVersions `S.disjoint` serverTLSVersions ->
-                success
-            | Just (Rustls.ClientCertVerifier _) <- serverConfigClientCertVerifier,
-              null clientConfigCertifiedKeys ->
-                success
-            | otherwise -> failure
+          | S.fromList clientConfigALPNProtocols
+              `S.disjoint` S.fromList serverConfigALPNProtocols ->
+              success
+          | clientTLSVersions `S.disjoint` serverTLSVersions ->
+              success
+          | Just Rustls.AllowAnyAuthenticatedClient <-
+              Rustls.clientCertVerifierPolicy <$> serverConfigClientCertVerifier,
+            null clientConfigCertifiedKeys ->
+              success
+          | otherwise -> failure
   where
     nonEmptySet def = S.fromList . NE.toList . fromMaybe def . NE.nonEmpty
 
@@ -157,12 +158,11 @@ genTestSetup MiniCA {..} = do
   serverConfigALPNProtocols <- (commonALPNProtocols <>) <$> genALPNProtocols
   serverConfigIgnoreClientOrder <- Gen.bool_
   serverConfigTLSVersions <- genTLSVersions
-  serverConfigClientCertVerifier <-
-    Gen.element
-      [ Nothing,
-        Just $ Rustls.ClientCertVerifier [Rustls.PEMCertificatesStrict miniCACert],
-        Just $ Rustls.ClientCertVerifierOptional [Rustls.PEMCertificatesStrict miniCACert]
-      ]
+  serverConfigClientCertVerifier <- Gen.maybe do
+    clientCertVerifierPolicy <- Gen.enumBounded
+    let clientCertVerifierCertificates = pure $ Rustls.PEMCertificatesStrict miniCACert
+        clientCertVerifierCRLs = [] -- TODO test this?
+    pure Rustls.ClientCertVerifier {..}
   let serverConfigCipherSuites = getCipherSuites serverConfigTLSVersions
       serverConfigCertifiedKeys = pure miniCAServerCertKey
       serverConfigBuilder = Rustls.ServerConfigBuilder {..}
