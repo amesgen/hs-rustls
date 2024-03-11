@@ -128,12 +128,31 @@ data ClientConfig = ClientConfig
   }
 
 -- | How to verify TLS client certificates.
-data ClientCertVerifier
-  = -- | Root certificates used to verify TLS client certificates.
-    ClientCertVerifier [PEMCertificates]
-  | -- | Root certificates used to verify TLS client certificates if present,
-    -- but does not reject clients which provide no certificate.
-    ClientCertVerifierOptional [PEMCertificates]
+data ClientCertVerifier = ClientCertVerifier
+  { -- | Which client connections are allowed.
+    clientCertVerifierPolicy :: ClientCertVerifierPolicy,
+    -- | Certificates used to verify TLS client certificates.
+    clientCertVerifierCertificates :: NonEmpty PEMCertificates,
+    -- | List of certificate revocation lists used to verify TLS client
+    -- certificates.
+    clientCertVerifierCRLs :: [CertificateRevocationList]
+  }
+  deriving stock (Show, Generic)
+
+-- | Which client connections are allowed by a 'ClientCertVerifier'.
+data ClientCertVerifierPolicy
+  = -- | Allow any authenticated client (i.e. offering a trusted certificate),
+    -- and reject clients offering none.
+    AllowAnyAuthenticatedClient
+  | -- | Allow any authenticated client (i.e. offering a trusted certificate),
+    -- but also allow clients offering none.
+    AllowAnyAnonymousOrAuthenticatedClient
+  deriving stock (Show, Eq, Ord, Enum, Bounded, Generic)
+
+-- | One or more PEM-encoded certificate revocation lists (CRL).
+newtype CertificateRevocationList = CertificateRevocationList
+  { unCertificateRevocationList :: ByteString
+  }
   deriving stock (Show, Generic)
 
 -- | Rustls client config builder.

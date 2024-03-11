@@ -38,13 +38,21 @@ module Rustls.Internal.FFI
     serverConfigBuilderSetALPNProtocols,
     serverConfigBuilderSetIgnoreClientOrder,
     serverConfigBuilderSetCertifiedKeys,
-    ClientCertVerifier,
-    clientCertVerifierNew,
-    clientCertVerifierFree,
+    AllowAnyAuthenticatedClientVerifier,
+    AllowAnyAuthenticatedClientBuilder,
+    allowAnyAuthenticatedClientBuilderNew,
+    allowAnyAuthenticatedClientBuilderAddCRL,
+    allowAnyAuthenticatedClientBuilderFree,
+    allowAnyAuthenticatedClientVerifierNew,
+    allowAnyAuthenticatedClientVerifierFree,
     serverConfigBuilderSetClientVerifier,
-    ClientCertVerifierOptional,
-    clientCertVerifierOptionalNew,
-    clientCertVerifierOptionalFree,
+    AllowAnyAnonymousOrAuthenticatedClientVerifier,
+    AllowAnyAnonymousOrAuthenticatedClientBuilder,
+    clientCertVerifierOptionalBuilderNew,
+    clientCertVerifierOptionalBuilderAddCRL,
+    clientCertVerifierOptionalBuilderFree,
+    allowAnyAnonymousOrAuthenticatedClientVerifierNew,
+    allowAnyAnonymousOrAuthenticatedClientVerifierFree,
     serverConfigBuilderSetClientVerifierOptional,
 
     -- * Certificate stuff
@@ -290,30 +298,61 @@ foreign import capi unsafe "rustls.h rustls_server_config_builder_set_certified_
   serverConfigBuilderSetCertifiedKeys ::
     Ptr ServerConfigBuilder -> ConstPtr (ConstPtr CertifiedKey) -> CSize -> IO Result
 
-data {-# CTYPE "rustls.h" "rustls_client_cert_verifier" #-} ClientCertVerifier
+data {-# CTYPE "rustls.h" "rustls_allow_any_authenticated_client_verifier" #-} AllowAnyAuthenticatedClientVerifier
 
-foreign import capi unsafe "rustls.h rustls_client_cert_verifier_new"
-  clientCertVerifierNew :: ConstPtr RootCertStore -> IO (ConstPtr ClientCertVerifier)
+data {-# CTYPE "rustls.h" "rustls_allow_any_authenticated_client_builder" #-} AllowAnyAuthenticatedClientBuilder
 
-foreign import capi unsafe "rustls.h rustls_client_cert_verifier_free"
-  clientCertVerifierFree :: ConstPtr ClientCertVerifier -> IO ()
+-- TODO revocation lists
+
+foreign import capi unsafe "rustls.h rustls_allow_any_authenticated_client_builder_new"
+  allowAnyAuthenticatedClientBuilderNew ::
+    ConstPtr RootCertStore -> IO (Ptr AllowAnyAuthenticatedClientBuilder)
+
+foreign import capi unsafe "rustls.h rustls_allow_any_authenticated_client_builder_add_crl"
+  allowAnyAuthenticatedClientBuilderAddCRL ::
+    Ptr AllowAnyAuthenticatedClientBuilder -> ConstPtr Word8 -> CSize -> IO Result
+
+foreign import capi unsafe "rustls.h rustls_allow_any_authenticated_client_builder_free"
+  allowAnyAuthenticatedClientBuilderFree :: Ptr AllowAnyAuthenticatedClientBuilder -> IO ()
+
+foreign import capi unsafe "rustls.h rustls_allow_any_authenticated_client_verifier_new"
+  allowAnyAuthenticatedClientVerifierNew ::
+    Ptr AllowAnyAuthenticatedClientBuilder -> IO (ConstPtr AllowAnyAuthenticatedClientVerifier)
+
+foreign import capi unsafe "rustls.h rustls_allow_any_authenticated_client_verifier_free"
+  allowAnyAuthenticatedClientVerifierFree ::
+    ConstPtr AllowAnyAuthenticatedClientVerifier -> IO ()
 
 foreign import capi unsafe "rustls.h rustls_server_config_builder_set_client_verifier"
   serverConfigBuilderSetClientVerifier ::
-    Ptr ServerConfigBuilder -> ConstPtr ClientCertVerifier -> IO ()
+    Ptr ServerConfigBuilder -> ConstPtr AllowAnyAuthenticatedClientVerifier -> IO ()
 
-data {-# CTYPE "rustls.h" "rustls_client_cert_verifier_optional" #-} ClientCertVerifierOptional
+data {-# CTYPE "rustls.h" "rustls_allow_any_anonymous_or_authenticated_client_verifier" #-} AllowAnyAnonymousOrAuthenticatedClientVerifier
 
-foreign import capi unsafe "rustls.h rustls_client_cert_verifier_optional_new"
-  clientCertVerifierOptionalNew ::
-    ConstPtr RootCertStore -> IO (ConstPtr ClientCertVerifierOptional)
+data {-# CTYPE "rustls.h" "rustls_allow_any_anonymous_or_authenticated_client_builder" #-} AllowAnyAnonymousOrAuthenticatedClientBuilder
 
-foreign import capi unsafe "rustls.h rustls_client_cert_verifier_optional_free"
-  clientCertVerifierOptionalFree :: ConstPtr ClientCertVerifierOptional -> IO ()
+foreign import capi unsafe "rustls.h rustls_client_cert_verifier_optional_builder_new"
+  clientCertVerifierOptionalBuilderNew ::
+    ConstPtr RootCertStore -> IO (Ptr AllowAnyAnonymousOrAuthenticatedClientBuilder)
+
+foreign import capi unsafe "rustls.h rustls_client_cert_verifier_optional_builder_add_crl"
+  clientCertVerifierOptionalBuilderAddCRL ::
+    Ptr AllowAnyAnonymousOrAuthenticatedClientBuilder -> ConstPtr Word8 -> CSize -> IO Result
+
+foreign import capi unsafe "rustls.h rustls_client_cert_verifier_optional_builder_free"
+  clientCertVerifierOptionalBuilderFree :: Ptr AllowAnyAnonymousOrAuthenticatedClientBuilder -> IO ()
+
+foreign import capi unsafe "rustls.h rustls_allow_any_anonymous_or_authenticated_client_verifier_new"
+  allowAnyAnonymousOrAuthenticatedClientVerifierNew ::
+    Ptr AllowAnyAnonymousOrAuthenticatedClientBuilder -> IO (ConstPtr AllowAnyAnonymousOrAuthenticatedClientVerifier)
+
+foreign import capi unsafe "rustls.h rustls_allow_any_anonymous_or_authenticated_client_verifier_free"
+  allowAnyAnonymousOrAuthenticatedClientVerifierFree ::
+    ConstPtr AllowAnyAnonymousOrAuthenticatedClientVerifier -> IO ()
 
 foreign import capi unsafe "rustls.h rustls_server_config_builder_set_client_verifier_optional"
   serverConfigBuilderSetClientVerifierOptional ::
-    Ptr ServerConfigBuilder -> ConstPtr ClientCertVerifierOptional -> IO ()
+    Ptr ServerConfigBuilder -> ConstPtr AllowAnyAnonymousOrAuthenticatedClientVerifier -> IO ()
 
 -- add custom session persistence functions?
 
@@ -355,7 +394,7 @@ foreign import capi unsafe "rustls.h rustls_connection_get_protocol_version"
 foreign import capi unsafe "rustls.h rustls_connection_get_negotiated_ciphersuite"
   connectionGetNegotiatedCipherSuite :: ConstPtr Connection -> IO (ConstPtr SupportedCipherSuite)
 
-foreign import capi unsafe "rustls.h rustls_server_connection_get_sni_hostname"
+foreign import capi unsafe "rustls.h rustls_server_connection_get_server_name"
   serverConnectionGetSNIHostname :: ConstPtr Connection -> Ptr Word8 -> CSize -> Ptr CSize -> IO Result
 
 foreign import capi unsafe "rustls.h rustls_connection_get_peer_certificate"

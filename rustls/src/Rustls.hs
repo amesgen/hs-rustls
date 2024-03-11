@@ -76,6 +76,7 @@ module Rustls
     ServerConfigBuilder (..),
     defaultServerConfigBuilder,
     ClientCertVerifier (..),
+    ClientCertVerifierPolicy (..),
 
     -- ** Config
     ServerConfig,
@@ -125,6 +126,7 @@ module Rustls
     ALPNProtocol (..),
     CertifiedKey (..),
     DERCertificate (..),
+    CertificateRevocationList (..),
     TLSVersion (TLS12, TLS13, unTLSVersion),
     defaultTLSVersions,
     allTLSVersions,
@@ -160,6 +162,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Foreign as T
+import Data.Traversable (for)
 import Foreign
 import Foreign.C
 import GHC.Conc (reportError)
@@ -176,7 +179,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- | Combined version string of Rustls and rustls-ffi.
 --
 -- >>> version
--- "rustls-ffi/0.9.2/rustls/0.20.8"
+-- "rustls-ffi/0.11.0/rustls/0.21.5"
 version :: Text
 version = unsafePerformIO $ alloca \strPtr -> do
   FFI.hsVersion strPtr
@@ -348,22 +351,34 @@ buildServerConfig ServerConfigBuilder {..} = liftIO . E.mask_ $
           (fromBool @CBool serverConfigIgnoreClientOrder)
       withCertifiedKeys (NE.toList serverConfigCertifiedKeys) \(ptr, len) ->
         rethrowR =<< FFI.serverConfigBuilderSetCertifiedKeys builder ptr len
-      let setBuilderCCV certs ccvNew ccvFree setCCV =
-            withRootCertStore certs \roots ->
-              E.bracket (ccvNew roots) ccvFree $ setCCV builder
-      for_ serverConfigClientCertVerifier \case
-        ClientCertVerifier certs -> do
-          setBuilderCCV
-            certs
-            FFI.clientCertVerifierNew
-            FFI.clientCertVerifierFree
-            FFI.serverConfigBuilderSetClientVerifier
-        ClientCertVerifierOptional certs -> do
-          setBuilderCCV
-            certs
-            FFI.clientCertVerifierOptionalNew
-            FFI.clientCertVerifierOptionalFree
-            FFI.serverConfigBuilderSetClientVerifierOptional
+      for_ serverConfigClientCertVerifier \ClientCertVerifier {..} -> do
+        let setBuilderCCV ccvbNew ccvbAddCRL ccvbFree ccvNew ccvFree setCCV = evalContT do
+              roots <- ContT $ withRootCertStore $ NE.toList clientCertVerifierCertificates
+              ccvb <- ContT $ E.bracket (ccvbNew roots) ccvbFree
+              crls :: [CStringLen] <-
+                for clientCertVerifierCRLs $
+                  ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
+              liftIO do
+                for_ crls \(ptr, len) ->
+                  ccvbAddCRL ccvb (ConstPtr (castPtr ptr)) (intToCSize len)
+                E.bracket (ccvNew ccvb) ccvFree $ setCCV builder
+        case clientCertVerifierPolicy of
+          AllowAnyAuthenticatedClient ->
+            setBuilderCCV
+              FFI.allowAnyAuthenticatedClientBuilderNew
+              FFI.allowAnyAuthenticatedClientBuilderAddCRL
+              FFI.allowAnyAuthenticatedClientBuilderFree
+              FFI.allowAnyAuthenticatedClientVerifierNew
+              FFI.allowAnyAuthenticatedClientVerifierFree
+              FFI.serverConfigBuilderSetClientVerifier
+          AllowAnyAnonymousOrAuthenticatedClient ->
+            setBuilderCCV
+              FFI.clientCertVerifierOptionalBuilderNew
+              FFI.clientCertVerifierOptionalBuilderAddCRL
+              FFI.clientCertVerifierOptionalBuilderFree
+              FFI.allowAnyAnonymousOrAuthenticatedClientVerifierNew
+              FFI.allowAnyAnonymousOrAuthenticatedClientVerifierFree
+              FFI.serverConfigBuilderSetClientVerifierOptional
       serverConfigPtr <-
         newForeignPtr FFI.serverConfigFree . unConstPtr
           =<< FFI.serverConfigBuilderBuild builder
