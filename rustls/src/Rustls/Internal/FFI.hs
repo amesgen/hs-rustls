@@ -1,7 +1,3 @@
-#if DERIVE_STORABLE_PLUGIN
-{-# OPTIONS_GHC -fplugin=Foreign.Storable.Generic.Plugin #-}
-#endif
-
 -- | Internal module, not subject to PVP.
 module Rustls.Internal.FFI
   ( ConstPtr (..),
