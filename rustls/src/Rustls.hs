@@ -29,8 +29,9 @@
 --   clientConfig <-
 --     Rustls.buildClientConfig $
 --       Rustls.defaultClientConfigBuilder serverCertVerifier
---   let newConnection =
---         Rustls.newClientConnection socket clientConfig "example.org"
+--   let backend = Rustls.mkSocketBackend socket
+--       newConnection =
+--         Rustls.newClientConnection backend clientConfig "example.org"
 --   withAcquire newConnection $ \conn -> do
 --     Rustls.writeBS conn "GET /"
 --     recv <- Rustls.readBS conn 1000 -- max number of bytes to read
@@ -128,7 +129,8 @@ module Rustls
 
     -- ** Backend
     Backend (..),
-    ByteStringBackend (..),
+    mkSocketBackend,
+    mkByteStringBackend,
 
     -- ** Types
     ALPNProtocol (..),
@@ -155,23 +157,23 @@ where
 
 import Control.Concurrent (forkFinally, killThread)
 import Control.Concurrent.MVar
-import qualified Control.Exception as E
+import Control.Exception qualified as E
 import Control.Monad (forever, void, when)
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Cont
 import Control.Monad.Trans.Reader
 import Data.Acquire
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Internal as BI
-import qualified Data.ByteString.Unsafe as BU
+import Data.ByteString qualified as B
+import Data.ByteString.Internal qualified as BI
+import Data.ByteString.Unsafe qualified as BU
 import Data.Coerce
 import Data.Foldable (for_, toList)
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NE
+import Data.List.NonEmpty qualified as NE
 import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.Foreign as T
+import Data.Text qualified as T
+import Data.Text.Foreign qualified as T
 import Data.Traversable (for)
 import Data.Word
 import Foreign hiding (void)
@@ -180,7 +182,7 @@ import GHC.Conc (reportError)
 import GHC.Generics (Generic)
 import Rustls.Internal
 import Rustls.Internal.FFI (ConstPtr (..), TLSVersion (..))
-import qualified Rustls.Internal.FFI as FFI
+import Rustls.Internal.FFI qualified as FFI
 import System.IO.Unsafe (unsafePerformIO)
 
 -- $setup
@@ -468,8 +470,7 @@ newLogCallback cb = fmap LogCallback . flip mkAcquire freeHaskellFunPtr $
     report = reportError . E.SomeException . RustlsLogException
 
 newConnection ::
-  (Backend b) =>
-  b ->
+  Backend ->
   ForeignPtr config ->
   Maybe LogCallback ->
   (ConstPtr config -> Ptr (Ptr FFI.Connection) -> IO FFI.Result) ->
@@ -513,8 +514,7 @@ newConnection backend configPtr logCallback connectionNew =
 
 -- | Initialize a TLS connection as a client.
 newClientConnection ::
-  (Backend b) =>
-  b ->
+  Backend ->
   ClientConfig ->
   -- | Hostname.
   Text ->
@@ -526,8 +526,7 @@ newClientConnection b ClientConfig {..} hostname =
 
 -- | Initialize a TLS connection as a server.
 newServerConnection ::
-  (Backend b) =>
-  b ->
+  Backend ->
   ServerConfig ->
   Acquire (Connection Server)
 newServerConnection b ServerConfig {..} =

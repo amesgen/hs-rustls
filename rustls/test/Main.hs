@@ -255,7 +255,7 @@ runInMemoryTest TestSetup {..} = do
           Rustls.writeBS conn "close"
           pure (alpnProtocol, tlsVersion, cipherSuite, peerCert, received)
 
-  (backend0, backend1) <- mkConnectedBSBackends
+  (backend0, backend1) <- mkConnectedBackends
 
   res <- liftIO . runExceptT $ do
     ( ( negotiatedServerALPNProtocol,
@@ -305,13 +305,13 @@ withMiniCA = withResource
     pure (tmpDir, MiniCA {..})
   \(tmpDir, _) -> Dir.removeDirectoryRecursive tmpDir
 
-mkConnectedBSBackends :: (MonadIO m) => m (Rustls.ByteStringBackend, Rustls.ByteStringBackend)
-mkConnectedBSBackends = liftIO do
+mkConnectedBackends :: (MonadIO m) => m (Rustls.Backend, Rustls.Backend)
+mkConnectedBackends = liftIO do
   buf0 <- newEmptyTMVarIO
   buf1 <- newEmptyTMVarIO
   pure (mkBSBackend buf0 buf1, mkBSBackend buf1 buf0)
   where
-    mkBSBackend readBuf writeBuf = Rustls.ByteStringBackend {..}
+    mkBSBackend readBuf writeBuf = Rustls.mkByteStringBackend bsbRead bsbWrite
       where
         bsbRead len = atomically do
           (bs, bs') <- B.splitAt len <$> takeTMVar readBuf

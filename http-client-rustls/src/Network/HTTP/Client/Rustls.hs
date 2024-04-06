@@ -69,7 +69,8 @@ rustlsManagerSettings conf =
   where
     makeTlsConnection conf socket hostname = E.mask \restore -> do
       let strippedHost = T.pack $ HTTP.strippedHostName hostname
-          Acquire allocate = Rustls.newClientConnection socket conf strippedHost
+          backend = Rustls.mkSocketBackend socket
+          Acquire allocate = Rustls.newClientConnection backend conf strippedHost
       Allocated conn freeConn <- allocate restore
       HTTP.makeConnection
         do Rustls.readBS conn (fromIntegral B.defaultChunkSize)
