@@ -5,25 +5,25 @@ module Rustls.Internal where
 
 import Control.Concurrent (ThreadId)
 import Control.Concurrent.MVar
-import qualified Control.Exception as E
+import Control.Exception qualified as E
 import Control.Monad (when)
 import Control.Monad.Trans.Reader
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Unsafe as BU
+import Data.ByteString qualified as B
+import Data.ByteString.Unsafe qualified as BU
 import Data.Coerce (coerce)
 import Data.Function (on)
 import Data.Functor (void)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.Foreign as T
+import Data.Text qualified as T
+import Data.Text.Foreign qualified as T
 import Foreign hiding (void)
 import Foreign.C
 import GHC.Generics (Generic)
-import qualified Network.Socket as NS
+import Network.Socket qualified as NS
 import Rustls.Internal.FFI (ConstPtr (..))
-import qualified Rustls.Internal.FFI as FFI
+import Rustls.Internal.FFI qualified as FFI
 import System.IO.Unsafe (unsafePerformIO)
 
 -- | An ALPN protocol ID. See
@@ -261,54 +261,54 @@ data RustlsUnknownLogLevel = RustlsUnknownLogLevel FFI.LogLevel
   deriving stock (Show)
   deriving anyclass (E.Exception)
 
--- | Underlying data sources for Rustls.
-class Backend b where
-  -- | Read data from the backend into the given buffer.
-  backendRead ::
-    b ->
-    -- | Target buffer pointer.
-    Ptr Word8 ->
-    -- | Target buffer length.
-    CSize ->
-    -- | Amount of bytes read.
-    IO CSize
+-- | Underlying data source for Rustls.
+data Backend = Backend
+  { -- | Read data from the backend into the given buffer.
+    backendRead ::
+      -- Target buffer pointer.
+      Ptr Word8 ->
+      -- Target buffer length.
+      CSize ->
+      -- Amount of bytes read.
+      IO CSize,
+    -- | Write data from the given buffer to the backend.
+    backendWrite ::
+      -- Source buffer pointer.
+      Ptr Word8 ->
+      -- Source buffer length.
+      CSize ->
+      -- Amount of bytes written.
+      IO CSize
+  }
 
-  -- | Write data from the given buffer to the backend.
-  backendWrite ::
-    b ->
-    -- | Source buffer pointer.
-    Ptr Word8 ->
-    -- | Source buffer length.
-    CSize ->
-    -- | Amount of bytes written.
-    IO CSize
-
-instance Backend NS.Socket where
-  backendRead s buf len =
-    intToCSize <$> NS.recvBuf s buf (cSizeToInt len)
-  backendWrite s buf len =
-    intToCSize <$> NS.sendBuf s buf (cSizeToInt len)
+mkSocketBackend :: NS.Socket -> Backend
+mkSocketBackend s = Backend {..}
+  where
+    backendRead buf len =
+      intToCSize <$> NS.recvBuf s buf (cSizeToInt len)
+    backendWrite buf len =
+      intToCSize <$> NS.sendBuf s buf (cSizeToInt len)
 
 -- | An in-memory 'Backend'.
-data ByteStringBackend = ByteStringBackend
-  { -- | Read a 'ByteString' with the given max length.
-    bsbRead :: Int -> IO ByteString,
-    -- | Write a 'ByteString'.
-    bsbWrite :: ByteString -> IO ()
-  }
-  deriving stock (Generic)
-
--- | This instance will silently truncate 'ByteString's which are too long.
-instance Backend ByteStringBackend where
-  backendRead ByteStringBackend {bsbRead} buf len = do
-    bs <- bsbRead (cSizeToInt len)
-    BU.unsafeUseAsCStringLen bs \(bsPtr, bsLen) -> do
-      let copyLen = bsLen `min` cSizeToInt len
-      copyBytes buf (castPtr bsPtr) copyLen
-      pure $ intToCSize copyLen
-  backendWrite ByteStringBackend {bsbWrite} buf len = do
-    bsbWrite =<< B.packCStringLen (castPtr buf, cSizeToInt len)
-    pure len
+mkByteStringBackend ::
+  -- | Read a 'ByteString' with the given max length.
+  --
+  -- This will silently truncate 'ByteString's which are too long.
+  (Int -> IO ByteString) ->
+  -- | Write a 'ByteString'.
+  (ByteString -> IO ()) ->
+  Backend
+mkByteStringBackend bsbRead bsbWrite = Backend {..}
+  where
+    backendRead buf len = do
+      bs <- bsbRead (cSizeToInt len)
+      BU.unsafeUseAsCStringLen bs \(bsPtr, bsLen) -> do
+        let copyLen = bsLen `min` cSizeToInt len
+        copyBytes buf (castPtr bsPtr) copyLen
+        pure $ intToCSize copyLen
+    backendWrite buf len = do
+      bsbWrite =<< B.packCStringLen (castPtr buf, cSizeToInt len)
+      pure len
 
 -- | Type-level indicator whether a 'Connection' is client- or server-side.
 data Side = Client | Server
@@ -318,12 +318,9 @@ newtype Connection (side :: Side) = Connection (MVar Connection')
 
 type role Connection nominal
 
-data Connection'
-  = forall b.
-  (Backend b) =>
-  Connection'
+data Connection' = Connection'
   { conn :: Ptr FFI.Connection,
-    backend :: b,
+    backend :: Backend,
     lenPtr :: Ptr CSize,
     ioMsgReq :: MVar IOMsgReq,
     ioMsgRes :: MVar IOMsgRes,
@@ -418,7 +415,6 @@ completeIO c@Connection' {..} = go NotEOF
               when (eof == IsEOF) $ fail "rustls: unexpected eof"
               pure False
           if finished then pure eof else go eof
-      where
 
     runWrite = do
       wantsWrite <- getWantsWrite c
