@@ -235,32 +235,33 @@ defaultClientConfigBuilder serverCertVerifier =
       clientConfigCertifiedKeys = []
     }
 
-withCertifiedKeys :: [CertifiedKey] -> ((ConstPtr (ConstPtr FFI.CertifiedKey), CSize) -> IO a) -> IO a
-withCertifiedKeys certifiedKeys cb =
-  withMany withCertifiedKey certifiedKeys \certKeys ->
-    withArrayLen certKeys \len ptr -> cb (ConstPtr ptr, intToCSize len)
+withCertifiedKeys :: [CertifiedKey] -> ContT a IO (ConstPtr (ConstPtr FFI.CertifiedKey), CSize)
+withCertifiedKeys certifiedKeys = do
+  certKeys <- for certifiedKeys withCertifiedKey
+  ContT \cb -> withArrayLen certKeys \len ptr -> cb (ConstPtr ptr, intToCSize len)
   where
-    withCertifiedKey CertifiedKey {..} cb =
-      BU.unsafeUseAsCStringLen certificateChain \(certPtr, certLen) ->
-        BU.unsafeUseAsCStringLen privateKey \(privPtr, privLen) ->
-          alloca \certKeyPtr -> do
-            rethrowR
-              =<< FFI.certifiedKeyBuild
-                (ConstPtr $ castPtr certPtr)
-                (intToCSize certLen)
-                (ConstPtr $ castPtr privPtr)
-                (intToCSize privLen)
-                certKeyPtr
-            cb =<< peek certKeyPtr
+    withCertifiedKey CertifiedKey {..} = do
+      (certPtr, certLen) <- ContT $ BU.unsafeUseAsCStringLen certificateChain
+      (privPtr, privLen) <- ContT $ BU.unsafeUseAsCStringLen privateKey
+      certKeyPtr <- ContT alloca
+      liftIO do
+        rethrowR
+          =<< FFI.certifiedKeyBuild
+            (ConstPtr $ castPtr certPtr)
+            (intToCSize certLen)
+            (ConstPtr $ castPtr privPtr)
+            (intToCSize privLen)
+            certKeyPtr
+        peek certKeyPtr
 
-withALPNProtocols :: [ALPNProtocol] -> ((ConstPtr FFI.SliceBytes, CSize) -> IO a) -> IO a
-withALPNProtocols bss cb = do
-  withMany withSliceBytes (coerce bss) \bsPtrs ->
-    withArrayLen bsPtrs \len bsPtr -> cb (ConstPtr bsPtr, intToCSize len)
+withALPNProtocols :: [ALPNProtocol] -> ContT a IO (ConstPtr FFI.SliceBytes, CSize)
+withALPNProtocols bss = do
+  bsPtrs <- for (coerce bss) withSliceBytes
+  ContT \cb -> withArrayLen bsPtrs \len bsPtr -> cb (ConstPtr bsPtr, intToCSize len)
   where
-    withSliceBytes bs cb =
-      BU.unsafeUseAsCStringLen bs \(castPtr -> buf, intToCSize -> len) ->
-        cb $ FFI.SliceBytes buf len
+    withSliceBytes bs = do
+      (buf, len) <- ContT $ BU.unsafeUseAsCStringLen bs
+      pure $ FFI.SliceBytes (castPtr buf) (intToCSize len)
 
 configBuilderNew ::
   ( ConstPtr (ConstPtr FFI.SupportedCipherSuite) ->
@@ -295,8 +296,8 @@ configBuilderNew configBuilderNewCustom cipherSuites tlsVersions = evalContT do
         builderPtr
     peek builderPtr
 
-withRootCertStore :: [PEMCertificates] -> (ConstPtr FFI.RootCertStore -> IO a) -> IO a
-withRootCertStore certs = runContT do
+withRootCertStore :: [PEMCertificates] -> ContT a IO (ConstPtr FFI.RootCertStore)
+withRootCertStore certs = do
   storeBuilder <-
     ContT $ E.bracket FFI.rootCertStoreBuilderNew FFI.rootCertStoreBuilderFree
   let isStrict :: PEMCertificateParsing -> CBool
@@ -333,103 +334,117 @@ withRootCertStore certs = runContT do
 -- This is a relatively expensive operation, so it is a good idea to share one
 -- 'ClientConfig' when creating multiple 'Connection's.
 buildClientConfig :: (MonadIO m) => ClientConfigBuilder -> m ClientConfig
-buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $
-  E.bracketOnError
-    ( configBuilderNew
-        FFI.clientConfigBuilderNewCustom
-        clientConfigCipherSuites
-        clientConfigTLSVersions
-    )
-    FFI.clientConfigBuilderFree
-    \builder -> do
-      evalContT do
-        let ServerCertVerifier {..} = clientConfigServerCertVerifier
-        rootCertStore <-
-          ContT $ withRootCertStore $ toList serverCertVerifierCertificates
-        scvb <-
-          ContT $
-            E.bracket
-              (FFI.webPkiServerCertVerifierBuilderNew rootCertStore)
-              FFI.webPkiServerCertVerifierBuilderFree
-        crls :: [CStringLen] <-
-          for serverCertVerifierCRLs $
-            ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
-        liftIO $ for_ crls \(ptr, len) ->
-          FFI.webPkiServerCertVerifierBuilderAddCrl
-            scvb
-            (ConstPtr (castPtr ptr))
-            (intToCSize len)
-        scvPtr <- ContT alloca
-        let buildScv = do
-              rethrowR =<< FFI.webPkiServerCertVerifierBuilderBuild scvb scvPtr
-              peek scvPtr
-        scv <- ContT $ E.bracket buildScv FFI.serverCertVerifierFree
-        liftIO $ FFI.clientConfigBuilderSetServerVerifier builder (ConstPtr scv)
+buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
+  builder <-
+    ContT $
+      E.bracketOnError
+        ( configBuilderNew
+            FFI.clientConfigBuilderNewCustom
+            clientConfigCipherSuites
+            clientConfigTLSVersions
+        )
+        FFI.clientConfigBuilderFree
 
-      withALPNProtocols clientConfigALPNProtocols \(alpnPtr, len) ->
-        rethrowR =<< FFI.clientConfigBuilderSetALPNProtocols builder alpnPtr len
-      FFI.clientConfigBuilderSetEnableSNI builder (fromBool @CBool clientConfigEnableSNI)
-      withCertifiedKeys clientConfigCertifiedKeys \(ptr, len) ->
-        rethrowR =<< FFI.clientConfigBuilderSetCertifiedKey builder ptr len
-      let clientConfigLogCallback = Nothing
-      clientConfigPtr <-
-        newForeignPtr FFI.clientConfigFree . unConstPtr
-          =<< FFI.clientConfigBuilderBuild builder
-      pure ClientConfig {..}
+  let ServerCertVerifier {..} = clientConfigServerCertVerifier
+  rootCertStore <- withRootCertStore $ toList serverCertVerifierCertificates
+  scvb <-
+    ContT $
+      E.bracket
+        (FFI.webPkiServerCertVerifierBuilderNew rootCertStore)
+        FFI.webPkiServerCertVerifierBuilderFree
+  crls :: [CStringLen] <-
+    for serverCertVerifierCRLs $
+      ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
+  liftIO $ for_ crls \(ptr, len) ->
+    FFI.webPkiServerCertVerifierBuilderAddCrl
+      scvb
+      (ConstPtr (castPtr ptr))
+      (intToCSize len)
+  scvPtr <- ContT alloca
+  let buildScv = do
+        rethrowR =<< FFI.webPkiServerCertVerifierBuilderBuild scvb scvPtr
+        peek scvPtr
+  scv <- ContT $ E.bracket buildScv FFI.serverCertVerifierFree
+  liftIO $ FFI.clientConfigBuilderSetServerVerifier builder (ConstPtr scv)
+
+  (alpnPtr, len) <- withALPNProtocols clientConfigALPNProtocols
+  liftIO $ rethrowR =<< FFI.clientConfigBuilderSetALPNProtocols builder alpnPtr len
+
+  liftIO $
+    FFI.clientConfigBuilderSetEnableSNI builder (fromBool @CBool clientConfigEnableSNI)
+
+  (ptr, len) <- withCertifiedKeys clientConfigCertifiedKeys
+  liftIO $ rethrowR =<< FFI.clientConfigBuilderSetCertifiedKey builder ptr len
+
+  let clientConfigLogCallback = Nothing
+
+  liftIO do
+    clientConfigPtr <-
+      newForeignPtr FFI.clientConfigFree . unConstPtr
+        =<< FFI.clientConfigBuilderBuild builder
+    pure ClientConfig {..}
 
 -- | Build a 'ServerConfigBuilder' into a 'ServerConfig'.
 --
 -- This is a relatively expensive operation, so it is a good idea to share one
 -- 'ServerConfig' when creating multiple 'Connection's.
 buildServerConfig :: (MonadIO m) => ServerConfigBuilder -> m ServerConfig
-buildServerConfig ServerConfigBuilder {..} = liftIO . E.mask_ $
-  E.bracketOnError
-    ( configBuilderNew
-        FFI.serverConfigBuilderNewCustom
-        serverConfigCipherSuites
-        serverConfigTLSVersions
-    )
-    FFI.serverConfigBuilderFree
-    \builder -> do
-      withALPNProtocols serverConfigALPNProtocols \(alpnPtr, len) ->
-        rethrowR =<< FFI.serverConfigBuilderSetALPNProtocols builder alpnPtr len
-      rethrowR
-        =<< FFI.serverConfigBuilderSetIgnoreClientOrder
-          builder
-          (fromBool @CBool serverConfigIgnoreClientOrder)
-      withCertifiedKeys (NE.toList serverConfigCertifiedKeys) \(ptr, len) ->
-        rethrowR =<< FFI.serverConfigBuilderSetCertifiedKeys builder ptr len
-      for_ serverConfigClientCertVerifier \ClientCertVerifier {..} -> evalContT do
-        roots <- ContT $ withRootCertStore $ NE.toList clientCertVerifierCertificates
-        ccvb <-
-          ContT $
-            E.bracket
-              (FFI.webPkiClientCertVerifierBuilderNew roots)
-              FFI.webPkiClientCertVerifierBuilderFree
-        crls :: [CStringLen] <-
-          for clientCertVerifierCRLs $
-            ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
-        liftIO do
-          case clientCertVerifierPolicy of
-            AllowAnyAuthenticatedClient -> pure ()
-            AllowAnyAnonymousOrAuthenticatedClient ->
-              rethrowR =<< FFI.webPkiClientCertVerifierBuilderAllowUnauthenticated ccvb
-          for_ crls \(ptr, len) ->
-            FFI.webPkiClientCertVerifierBuilderAddCrl
-              ccvb
-              (ConstPtr (castPtr ptr))
-              (intToCSize len)
-        ccvPtr <- ContT alloca
-        let buildCcv = do
-              rethrowR =<< FFI.webPkiClientCertVerifierBuilderBuild ccvb ccvPtr
-              peek ccvPtr
-        ccv <- ContT $ E.bracket buildCcv FFI.clientCertVerifierFree
-        liftIO $ FFI.serverConfigBuilderSetClientVerifier builder (ConstPtr ccv)
-      serverConfigPtr <-
-        newForeignPtr FFI.serverConfigFree . unConstPtr
-          =<< FFI.serverConfigBuilderBuild builder
-      let serverConfigLogCallback = Nothing
-      pure ServerConfig {..}
+buildServerConfig ServerConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
+  builder <-
+    ContT $
+      E.bracketOnError
+        ( configBuilderNew
+            FFI.serverConfigBuilderNewCustom
+            serverConfigCipherSuites
+            serverConfigTLSVersions
+        )
+        FFI.serverConfigBuilderFree
+
+  (alpnPtr, len) <- withALPNProtocols serverConfigALPNProtocols
+  liftIO $ rethrowR =<< FFI.serverConfigBuilderSetALPNProtocols builder alpnPtr len
+
+  liftIO $
+    rethrowR
+      =<< FFI.serverConfigBuilderSetIgnoreClientOrder
+        builder
+        (fromBool @CBool serverConfigIgnoreClientOrder)
+
+  (ptr, len) <- withCertifiedKeys (NE.toList serverConfigCertifiedKeys)
+  liftIO $ rethrowR =<< FFI.serverConfigBuilderSetCertifiedKeys builder ptr len
+
+  for_ serverConfigClientCertVerifier \ClientCertVerifier {..} -> do
+    roots <- withRootCertStore $ NE.toList clientCertVerifierCertificates
+    ccvb <-
+      ContT $
+        E.bracket
+          (FFI.webPkiClientCertVerifierBuilderNew roots)
+          FFI.webPkiClientCertVerifierBuilderFree
+    crls :: [CStringLen] <-
+      for clientCertVerifierCRLs $
+        ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
+    liftIO do
+      case clientCertVerifierPolicy of
+        AllowAnyAuthenticatedClient -> pure ()
+        AllowAnyAnonymousOrAuthenticatedClient ->
+          rethrowR =<< FFI.webPkiClientCertVerifierBuilderAllowUnauthenticated ccvb
+      for_ crls \(ptr, len) ->
+        FFI.webPkiClientCertVerifierBuilderAddCrl
+          ccvb
+          (ConstPtr (castPtr ptr))
+          (intToCSize len)
+    ccvPtr <- ContT alloca
+    let buildCcv = do
+          rethrowR =<< FFI.webPkiClientCertVerifierBuilderBuild ccvb ccvPtr
+          peek ccvPtr
+    ccv <- ContT $ E.bracket buildCcv FFI.clientCertVerifierFree
+    liftIO $ FFI.serverConfigBuilderSetClientVerifier builder (ConstPtr ccv)
+
+  liftIO do
+    serverConfigPtr <-
+      newForeignPtr FFI.serverConfigFree . unConstPtr
+        =<< FFI.serverConfigBuilderBuild builder
+    let serverConfigLogCallback = Nothing
+    pure ServerConfig {..}
 
 -- | A 'ServerConfigBuilder' with good defaults.
 defaultServerConfigBuilder :: NonEmpty CertifiedKey -> ServerConfigBuilder
