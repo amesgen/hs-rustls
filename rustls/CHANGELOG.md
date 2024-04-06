@@ -1,5 +1,11 @@
 # Revision history for rustls
 
+## 0.1.0.0 -- 06.04.2024
+
+ * Use rustls-ffi 0.13.0, including new functionality (like recovactions)
+ * Only support GHC >= 9.2
+ * `Backend` is now a record instead of a type class
+
 ## 0.0.1.0 -- 12.03.2022
 
  * Use rustls-ffi 0.9.2
