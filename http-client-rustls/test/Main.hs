@@ -66,7 +66,14 @@ main = defaultMain $ withRustlsManagerAndServer \(fmap fst -> mgr) ->
             HTTP.newManager . rustlsManagerSettings
               =<< Rustls.buildClientConfig
                 ( Rustls.defaultClientConfigBuilder
-                    (Rustls.ClientRootsFromFile $ tmpDir </> "minica.pem")
+                    Rustls.ServerCertVerifier
+                      { Rustls.serverCertVerifierCertificates =
+                          pure $
+                            Rustls.PemCertificatesFromFile
+                              (tmpDir </> "minica.pem")
+                              Rustls.PEMCertificateParsingStrict,
+                        Rustls.serverCertVerifierCRLs = []
+                      }
                 )
           B.writeFile (tmpDir </> "file") $ B.replicate fileLength fileByte
           procInfo <-

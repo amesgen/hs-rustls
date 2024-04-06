@@ -1,7 +1,3 @@
-#if DERIVE_STORABLE_PLUGIN
-{-# OPTIONS_GHC -fplugin=Foreign.Storable.Generic.Plugin #-}
-#endif
-
 -- | Internal module, not subject to PVP.
 module Rustls.Internal.FFI
   ( ConstPtr (..),
@@ -19,8 +15,14 @@ module Rustls.Internal.FFI
     clientConfigBuilderSetALPNProtocols,
     clientConfigBuilderSetEnableSNI,
     clientConfigBuilderSetCertifiedKey,
-    clientConfigBuilderLoadRootsFromFile,
-    clientConfigBuilderUseRoots,
+    WebPkiServerCertVerifierBuilder,
+    ServerCertVerifier,
+    webPkiServerCertVerifierBuilderNew,
+    webPkiServerCertVerifierBuilderAddCrl,
+    webPkiServerCertVerifierBuilderFree,
+    webPkiServerCertVerifierBuilderBuild,
+    serverCertVerifierFree,
+    clientConfigBuilderSetServerVerifier,
 
     -- ** Connection
     clientConnectionNew,
@@ -38,14 +40,15 @@ module Rustls.Internal.FFI
     serverConfigBuilderSetALPNProtocols,
     serverConfigBuilderSetIgnoreClientOrder,
     serverConfigBuilderSetCertifiedKeys,
+    WebPkiClientCertVerifierBuilder,
     ClientCertVerifier,
-    clientCertVerifierNew,
+    webPkiClientCertVerifierBuilderNew,
+    webPkiClientCertVerifierBuilderAddCrl,
+    webPkiClientCertVerifierBuilderAllowUnauthenticated,
+    webPkiClientCertVerifierBuilderFree,
+    webPkiClientCertVerifierBuilderBuild,
     clientCertVerifierFree,
     serverConfigBuilderSetClientVerifier,
-    ClientCertVerifierOptional,
-    clientCertVerifierOptionalNew,
-    clientCertVerifierOptionalFree,
-    serverConfigBuilderSetClientVerifierOptional,
 
     -- * Certificate stuff
     CertifiedKey,
@@ -129,9 +132,13 @@ module Rustls.Internal.FFI
     defaultVersionsLen,
 
     -- ** Root cert store
+    RootCertStoreBuilder,
     RootCertStore,
-    rootCertStoreNew,
-    rootCertStoreAddPEM,
+    rootCertStoreBuilderNew,
+    rootCertStoreBuilderAddPem,
+    rootCertStoreBuilderLoadRootsFromFile,
+    rootCertStoreBuilderFree,
+    rootCertStoreBuilderBuild,
     rootCertStoreFree,
   )
 where
@@ -223,23 +230,6 @@ foreign import capi unsafe "rustls.h rustls_client_connection_new"
     Ptr (Ptr Connection) ->
     IO Result
 
-foreign import capi unsafe "rustls.h rustls_client_config_builder_load_roots_from_file"
-  clientConfigBuilderLoadRootsFromFile :: Ptr ClientConfigBuilder -> ConstCString -> IO Result
-
-data {-# CTYPE "rustls.h" "rustls_root_cert_store" #-} RootCertStore
-
-foreign import capi unsafe "rustls.h rustls_root_cert_store_new"
-  rootCertStoreNew :: IO (Ptr RootCertStore)
-
-foreign import capi unsafe "rustls.h rustls_root_cert_store_add_pem"
-  rootCertStoreAddPEM :: Ptr RootCertStore -> ConstPtr Word8 -> CSize -> CBool -> IO Result
-
-foreign import capi unsafe "rustls.h rustls_root_cert_store_free"
-  rootCertStoreFree :: Ptr RootCertStore -> IO ()
-
-foreign import capi unsafe "rustls.h rustls_client_config_builder_use_roots"
-  clientConfigBuilderUseRoots :: Ptr ClientConfigBuilder -> ConstPtr RootCertStore -> IO Result
-
 foreign import capi unsafe "rustls.h rustls_client_config_builder_set_alpn_protocols"
   clientConfigBuilderSetALPNProtocols ::
     Ptr ClientConfigBuilder -> ConstPtr SliceBytes -> CSize -> IO Result
@@ -251,7 +241,36 @@ foreign import capi unsafe "rustls.h rustls_client_config_builder_set_certified_
   clientConfigBuilderSetCertifiedKey ::
     Ptr ClientConfigBuilder -> ConstPtr (ConstPtr CertifiedKey) -> CSize -> IO Result
 
--- TODO add callback-based cert validation?
+data
+  {-# CTYPE "rustls.h" "rustls_web_pki_server_cert_verifier_builder" #-}
+  WebPkiServerCertVerifierBuilder
+
+data
+  {-# CTYPE "rustls.h" "rustls_server_cert_verifier" #-}
+  ServerCertVerifier
+
+foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder_new"
+  webPkiServerCertVerifierBuilderNew ::
+    ConstPtr RootCertStore -> IO (Ptr WebPkiServerCertVerifierBuilder)
+
+foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder_add_crl"
+  webPkiServerCertVerifierBuilderAddCrl ::
+    Ptr WebPkiServerCertVerifierBuilder -> ConstPtr Word8 -> CSize -> IO Result
+
+foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder_free"
+  webPkiServerCertVerifierBuilderFree ::
+    Ptr WebPkiServerCertVerifierBuilder -> IO ()
+
+foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder_build"
+  webPkiServerCertVerifierBuilderBuild ::
+    Ptr WebPkiServerCertVerifierBuilder -> Ptr (Ptr ServerCertVerifier) -> IO Result
+
+foreign import capi unsafe "rustls.h rustls_server_cert_verifier_free"
+  serverCertVerifierFree :: Ptr ServerCertVerifier -> IO ()
+
+foreign import capi unsafe "rustls.h rustls_client_config_builder_set_server_verifier"
+  clientConfigBuilderSetServerVerifier ::
+    Ptr ClientConfigBuilder -> ConstPtr ServerCertVerifier -> IO ()
 
 -- Server
 data {-# CTYPE "rustls.h" "rustls_server_config" #-} ServerConfig
@@ -290,30 +309,41 @@ foreign import capi unsafe "rustls.h rustls_server_config_builder_set_certified_
   serverConfigBuilderSetCertifiedKeys ::
     Ptr ServerConfigBuilder -> ConstPtr (ConstPtr CertifiedKey) -> CSize -> IO Result
 
-data {-# CTYPE "rustls.h" "rustls_client_cert_verifier" #-} ClientCertVerifier
+data
+  {-# CTYPE "rustls.h" "rustls_web_pki_client_cert_verifier_builder" #-}
+  WebPkiClientCertVerifierBuilder
 
-foreign import capi unsafe "rustls.h rustls_client_cert_verifier_new"
-  clientCertVerifierNew :: ConstPtr RootCertStore -> IO (ConstPtr ClientCertVerifier)
+data
+  {-# CTYPE "rustls.h" "rustls_client_cert_verifier" #-}
+  ClientCertVerifier
+
+-- TODO all features?
+
+foreign import capi unsafe "rustls.h rustls_web_pki_client_cert_verifier_builder_new"
+  webPkiClientCertVerifierBuilderNew ::
+    ConstPtr RootCertStore -> IO (Ptr WebPkiClientCertVerifierBuilder)
+
+foreign import capi unsafe "rustls.h rustls_web_pki_client_cert_verifier_builder_add_crl"
+  webPkiClientCertVerifierBuilderAddCrl ::
+    Ptr WebPkiClientCertVerifierBuilder -> ConstPtr Word8 -> CSize -> IO Result
+
+foreign import capi unsafe "rustls.h rustls_web_pki_client_cert_verifier_builder_allow_unauthenticated"
+  webPkiClientCertVerifierBuilderAllowUnauthenticated ::
+    Ptr WebPkiClientCertVerifierBuilder -> IO Result
+
+foreign import capi unsafe "rustls.h rustls_web_pki_client_cert_verifier_builder_free"
+  webPkiClientCertVerifierBuilderFree :: Ptr WebPkiClientCertVerifierBuilder -> IO ()
+
+foreign import capi unsafe "rustls.h rustls_web_pki_client_cert_verifier_builder_build"
+  webPkiClientCertVerifierBuilderBuild ::
+    Ptr WebPkiClientCertVerifierBuilder -> Ptr (Ptr ClientCertVerifier) -> IO Result
 
 foreign import capi unsafe "rustls.h rustls_client_cert_verifier_free"
-  clientCertVerifierFree :: ConstPtr ClientCertVerifier -> IO ()
+  clientCertVerifierFree :: Ptr ClientCertVerifier -> IO ()
 
 foreign import capi unsafe "rustls.h rustls_server_config_builder_set_client_verifier"
   serverConfigBuilderSetClientVerifier ::
     Ptr ServerConfigBuilder -> ConstPtr ClientCertVerifier -> IO ()
-
-data {-# CTYPE "rustls.h" "rustls_client_cert_verifier_optional" #-} ClientCertVerifierOptional
-
-foreign import capi unsafe "rustls.h rustls_client_cert_verifier_optional_new"
-  clientCertVerifierOptionalNew ::
-    ConstPtr RootCertStore -> IO (ConstPtr ClientCertVerifierOptional)
-
-foreign import capi unsafe "rustls.h rustls_client_cert_verifier_optional_free"
-  clientCertVerifierOptionalFree :: ConstPtr ClientCertVerifierOptional -> IO ()
-
-foreign import capi unsafe "rustls.h rustls_server_config_builder_set_client_verifier_optional"
-  serverConfigBuilderSetClientVerifierOptional ::
-    Ptr ServerConfigBuilder -> ConstPtr ClientCertVerifierOptional -> IO ()
 
 -- add custom session persistence functions?
 
@@ -355,7 +385,7 @@ foreign import capi unsafe "rustls.h rustls_connection_get_protocol_version"
 foreign import capi unsafe "rustls.h rustls_connection_get_negotiated_ciphersuite"
   connectionGetNegotiatedCipherSuite :: ConstPtr Connection -> IO (ConstPtr SupportedCipherSuite)
 
-foreign import capi unsafe "rustls.h rustls_server_connection_get_sni_hostname"
+foreign import capi unsafe "rustls.h rustls_server_connection_get_server_name"
   serverConnectionGetSNIHostname :: ConstPtr Connection -> Ptr Word8 -> CSize -> Ptr CSize -> IO Result
 
 foreign import capi unsafe "rustls.h rustls_connection_get_peer_certificate"
@@ -465,3 +495,30 @@ foreign import capi "rustls.h value RUSTLS_DEFAULT_VERSIONS"
 
 foreign import capi "rustls.h value RUSTLS_DEFAULT_VERSIONS_LEN"
   defaultVersionsLen :: CSize
+
+-- Root cert store
+
+data {-# CTYPE "rustls.h" "rustls_root_cert_store_builder" #-} RootCertStoreBuilder
+
+data {-# CTYPE "rustls.h" "rustls_root_cert_store" #-} RootCertStore
+
+foreign import capi unsafe "rustls.h rustls_root_cert_store_builder_new"
+  rootCertStoreBuilderNew :: IO (Ptr RootCertStoreBuilder)
+
+foreign import capi unsafe "rustls.h rustls_root_cert_store_builder_add_pem"
+  rootCertStoreBuilderAddPem ::
+    Ptr RootCertStoreBuilder -> ConstPtr Word8 -> CSize -> CBool -> IO Result
+
+foreign import capi unsafe "rustls.h rustls_root_cert_store_builder_load_roots_from_file"
+  rootCertStoreBuilderLoadRootsFromFile ::
+    Ptr RootCertStoreBuilder -> ConstCString -> CBool -> IO Result
+
+foreign import capi unsafe "rustls.h rustls_root_cert_store_builder_free"
+  rootCertStoreBuilderFree :: Ptr RootCertStoreBuilder -> IO ()
+
+foreign import capi unsafe "rustls.h rustls_root_cert_store_builder_build"
+  rootCertStoreBuilderBuild ::
+    Ptr RootCertStoreBuilder -> Ptr (ConstPtr RootCertStore) -> IO Result
+
+foreign import capi unsafe "rustls.h rustls_root_cert_store_free"
+  rootCertStoreFree :: ConstPtr RootCertStore -> IO ()

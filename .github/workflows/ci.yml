@@ -40,17 +40,18 @@ jobs:
       fail-fast: false
       matrix:
         ghc:
-          - 8.6.5
-          - 8.8.4
-          - 8.10.7
-          - 9.0.2
-          - 9.2.7
-          - 9.4.4
-          - 9.6.1
+          - '8.6'
+          - '8.8'
+          - '8.10'
+          - '9.0'
+          - '9.2'
+          - '9.4'
+          - '9.6'
+          - '9.8'
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v26
-      - uses: haskell/actions/setup@v2
+      - uses: haskell-actions/setup@v2
         id: setup-haskell
         with:
           ghc-version: ${{ matrix.ghc }}
@@ -58,7 +59,7 @@ jobs:
       - name: Build rustls-ffi
         run: |
           cd ${{ runner.temp }}
-          git clone https://github.com/rustls/rustls-ffi -b v0.9.2
+          git clone https://github.com/rustls/rustls-ffi -b v0.13.0
           cd rustls-ffi
           make DESTDIR=${{ runner.temp }}/rustls install
       - name: Install CLI dependencies

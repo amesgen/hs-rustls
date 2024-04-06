@@ -60,8 +60,8 @@ instance Show CipherSuite where
 
 -- | Rustls client config builder.
 data ClientConfigBuilder = ClientConfigBuilder
-  { -- | Client root certificates.
-    clientConfigRoots :: ClientRoots,
+  { -- | The server certificate verifier.
+    clientConfigServerCertVerifier :: ServerCertVerifier,
     -- | Supported 'FFI.TLSVersion's. When empty, good defaults are used.
     clientConfigTLSVersions :: [FFI.TLSVersion],
     -- | Supported 'CipherSuite's in order of preference. When empty, good
@@ -79,26 +79,34 @@ data ClientConfigBuilder = ClientConfigBuilder
   }
   deriving stock (Show, Generic)
 
--- | How to look up root certificates.
-data ClientRoots
-  = -- | Fetch PEM-encoded root certificates from a file.
-    ClientRootsFromFile FilePath
-  | -- | Use in-memory PEM-encoded certificates.
-    ClientRootsInMemory [PEMCertificates]
-  deriving stock (Generic)
-
-instance Show ClientRoots where
-  show _ = "ClientRoots"
-
--- | In-memory PEM-encoded certificates.
-data PEMCertificates
-  = -- | Syntactically valid PEM-encoded certificates.
-    PEMCertificatesStrict ByteString
-  | -- | PEM-encoded certificates, ignored if syntactically invalid.
-    --
-    -- This may be useful on systems that have syntactically invalid root certificates.
-    PEMCertificatesLax ByteString
+-- | How to verify TLS server certificates.
+data ServerCertVerifier = ServerCertVerifier
+  { -- | Certificates used to verify TLS server certificates.
+    serverCertVerifierCertificates :: NonEmpty PEMCertificates,
+    -- | List of certificate revocation lists used to verify TLS server
+    -- certificates.
+    serverCertVerifierCRLs :: [CertificateRevocationList]
+  }
   deriving stock (Show, Generic)
+
+-- | A source of PEM-encoded certificates.
+data PEMCertificates
+  = -- | In-memory PEM-encoded certificates.
+    PEMCertificatesInMemory ByteString PEMCertificateParsing
+  | -- |  Fetch PEM-encoded root certificates from a file.
+    PemCertificatesFromFile FilePath PEMCertificateParsing
+  deriving stock (Show, Generic)
+
+-- | Parsing mode for PEM-encoded certificates.
+data PEMCertificateParsing
+  = -- | Fail if syntactically invalid.
+    PEMCertificateParsingStrict
+  | -- | Ignore if syntactically invalid.
+    --
+    -- This may be useful on systems that have syntactically invalid root
+    -- certificates.
+    PEMCertificateParsingLax
+  deriving stock (Show, Eq, Ord, Enum, Bounded, Generic)
 
 -- | A complete chain of certificates plus a private key for the leaf certificate.
 data CertifiedKey = CertifiedKey
@@ -128,12 +136,31 @@ data ClientConfig = ClientConfig
   }
 
 -- | How to verify TLS client certificates.
-data ClientCertVerifier
-  = -- | Root certificates used to verify TLS client certificates.
-    ClientCertVerifier [PEMCertificates]
-  | -- | Root certificates used to verify TLS client certificates if present,
-    -- but does not reject clients which provide no certificate.
-    ClientCertVerifierOptional [PEMCertificates]
+data ClientCertVerifier = ClientCertVerifier
+  { -- | Which client connections are allowed.
+    clientCertVerifierPolicy :: ClientCertVerifierPolicy,
+    -- | Certificates used to verify TLS client certificates.
+    clientCertVerifierCertificates :: NonEmpty PEMCertificates,
+    -- | List of certificate revocation lists used to verify TLS client
+    -- certificates.
+    clientCertVerifierCRLs :: [CertificateRevocationList]
+  }
+  deriving stock (Show, Generic)
+
+-- | Which client connections are allowed by a 'ClientCertVerifier'.
+data ClientCertVerifierPolicy
+  = -- | Allow any authenticated client (i.e. offering a trusted certificate),
+    -- and reject clients offering none.
+    AllowAnyAuthenticatedClient
+  | -- | Allow any authenticated client (i.e. offering a trusted certificate),
+    -- but also allow clients offering none.
+    AllowAnyAnonymousOrAuthenticatedClient
+  deriving stock (Show, Eq, Ord, Enum, Bounded, Generic)
+
+-- | One or more PEM-encoded certificate revocation lists (CRL).
+newtype CertificateRevocationList = CertificateRevocationList
+  { unCertificateRevocationList :: ByteString
+  }
   deriving stock (Show, Generic)
 
 -- | Rustls client config builder.
@@ -291,7 +318,8 @@ newtype Connection (side :: Side) = Connection (MVar Connection')
 
 type role Connection nominal
 
-data Connection' = forall b.
+data Connection'
+  = forall b.
   (Backend b) =>
   Connection'
   { conn :: Ptr FFI.Connection,
@@ -332,14 +360,16 @@ data IOMsgRes
   | -- | Notify that the FFI call finished.
     DoneFFI
 
-interactTLS :: Connection' -> ReadOrWrite -> IO ()
+interactTLS :: Connection' -> ReadOrWrite -> IO CSize
 interactTLS Connection' {..} readOrWrite = E.uninterruptibleMask \restore -> do
   putMVar ioMsgReq $ Request readOrWrite
-  UsingBuffer buf len readPtr <- takeMVar ioMsgRes
-  poke readPtr
-    =<< restore (readOrWriteBackend buf len)
+  UsingBuffer buf len sizePtr <- takeMVar ioMsgRes
+  size <-
+    restore (readOrWriteBackend buf len)
       `E.onException` done FFI.ioResultErr
+  poke sizePtr size
   done FFI.ioResultOk
+  pure size
   where
     readOrWriteBackend = case readOrWrite of
       Read -> backendRead backend
@@ -349,41 +379,76 @@ interactTLS Connection' {..} readOrWrite = E.uninterruptibleMask \restore -> do
       DoneFFI <- takeMVar ioMsgRes
       pure ()
 
-data RunTLSMode = TLSHandshake | TLSRead | TLSWrite
-  deriving (Eq)
+data IsEOF = IsEOF | NotEOF
+  deriving stock (Show, Eq)
 
-runTLS :: Connection' -> RunTLSMode -> IO ()
-runTLS c@Connection' {..} = \case
-  TLSHandshake -> loopWhileTrue do
-    toBool @CBool <$> FFI.connectionIsHandshaking (ConstPtr conn) >>= \case
-      True -> (||) <$> runWrite <*> runRead
-      False -> pure False
-  TLSRead -> do
-    runTLS c TLSHandshake
-    loopWhileTrue runRead
-  TLSWrite -> do
-    runTLS c TLSHandshake
-    loopWhileTrue runWrite
+-- | Helper function, see @complete_io@ from rustls.
+--
+-- <https://github.com/rustls/rustls/blob/v/0.23.4/rustls/src/conn.rs#L544>
+completeIO :: Connection' -> IO IsEOF
+completeIO c@Connection' {..} = go NotEOF
   where
-    runRead = do
-      wantsRead <- toBool @CBool <$> FFI.connectionWantsRead (ConstPtr conn)
-      when wantsRead do
-        interactTLS c Read
-        r <- FFI.connectionProcessNewPackets conn
-        -- try to notify our peer that we encountered a TLS error
-        when (r /= FFI.resultOk) $ ignoreSyncExceptions $ void runWrite
-        rethrowR r
-      pure wantsRead
+    go eof = do
+      untilHandshaked <- getIsHandshaking c
+      atLeastOneWrite <- getWantsWrite c
+
+      loopWhileTrue runWrite
+
+      if not untilHandshaked && atLeastOneWrite
+        then pure eof
+        else do
+          wantsRead <- getWantsRead c
+          eof <-
+            if eof == NotEOF && wantsRead
+              then do
+                bytesRead <- interactTLS c Read
+                pure if bytesRead == 0 then IsEOF else NotEOF
+              else pure eof
+
+          r <- FFI.connectionProcessNewPackets conn
+          -- try to notify our peer that we encountered a TLS error
+          when (r /= FFI.resultOk) $ ignoreSyncExceptions $ void runWrite
+          rethrowR r
+
+          stillHandshaking <- getIsHandshaking c
+          finished <- case (untilHandshaked, stillHandshaking) of
+            (True, False) -> not <$> getWantsWrite c
+            (False, _) -> pure True
+            (True, True) -> do
+              when (eof == IsEOF) $ fail "rustls: unexpected eof"
+              pure False
+          if finished then pure eof else go eof
+      where
 
     runWrite = do
-      wantsWrite <- toBool @CBool <$> FFI.connectionWantsWrite (ConstPtr conn)
-      when wantsWrite $
-        interactTLS c Write
+      wantsWrite <- getWantsWrite c
+      when wantsWrite $ void $ interactTLS c Write
       pure wantsWrite
 
-    loopWhileTrue action = do
-      continue <- action
-      when continue $ loopWhileTrue action
+completePriorIO :: Connection' -> IO ()
+completePriorIO c = do
+  whenM (getIsHandshaking c) $ void $ completeIO c
+  whenM (getWantsWrite c) $ void $ completeIO c
+
+getIsHandshaking :: Connection' -> IO Bool
+getIsHandshaking Connection' {conn} =
+  toBool @CBool <$> FFI.connectionIsHandshaking (ConstPtr conn)
+
+getWantsRead :: Connection' -> IO Bool
+getWantsRead Connection' {conn} =
+  toBool @CBool <$> FFI.connectionWantsRead (ConstPtr conn)
+
+getWantsWrite :: Connection' -> IO Bool
+getWantsWrite Connection' {conn} =
+  toBool @CBool <$> FFI.connectionWantsWrite (ConstPtr conn)
+
+-- utils
+
+whenM :: (Monad m) => m Bool -> m () -> m ()
+whenM cond action = cond >>= \case True -> action; False -> pure ()
+
+loopWhileTrue :: (Monad m) => m Bool -> m ()
+loopWhileTrue action = whenM action $ loopWhileTrue action
 
 cSizeToInt :: CSize -> Int
 cSizeToInt = fromIntegral
