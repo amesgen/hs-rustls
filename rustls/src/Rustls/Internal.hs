@@ -5,25 +5,25 @@ module Rustls.Internal where
 
 import Control.Concurrent (ThreadId)
 import Control.Concurrent.MVar
-import qualified Control.Exception as E
+import Control.Exception qualified as E
 import Control.Monad (when)
 import Control.Monad.Trans.Reader
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Unsafe as BU
+import Data.ByteString qualified as B
+import Data.ByteString.Unsafe qualified as BU
 import Data.Coerce (coerce)
 import Data.Function (on)
 import Data.Functor (void)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.Foreign as T
+import Data.Text qualified as T
+import Data.Text.Foreign qualified as T
 import Foreign hiding (void)
 import Foreign.C
 import GHC.Generics (Generic)
-import qualified Network.Socket as NS
+import Network.Socket qualified as NS
 import Rustls.Internal.FFI (ConstPtr (..))
-import qualified Rustls.Internal.FFI as FFI
+import Rustls.Internal.FFI qualified as FFI
 import System.IO.Unsafe (unsafePerformIO)
 
 -- | An ALPN protocol ID. See

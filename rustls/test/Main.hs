@@ -2,7 +2,7 @@ module Main where
 
 import Control.Concurrent.Async (concurrently)
 import Control.Concurrent.STM.TMVar
-import qualified Control.Exception as E
+import Control.Exception qualified as E
 import Control.Monad (unless, when)
 import Control.Monad.IO.Class
 import Control.Monad.STM (atomically)
@@ -10,23 +10,23 @@ import Control.Monad.Trans.Except
 import Control.Monad.Trans.State.Strict (execStateT, modify')
 import Data.Acquire
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
+import Data.ByteString qualified as B
 import Data.Foldable (for_)
 import Data.Functor (void)
 import Data.IORef
-import qualified Data.List.NonEmpty as NE
+import Data.List.NonEmpty qualified as NE
 import Data.Maybe (fromMaybe, isJust)
-import qualified Data.Set as S
+import Data.Set qualified as S
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Hedgehog
-import qualified Hedgehog.Gen as Gen
-import qualified Hedgehog.Range as Range
-import qualified Rustls
-import qualified System.Directory as Dir
+import Hedgehog.Gen qualified as Gen
+import Hedgehog.Range qualified as Range
+import Rustls qualified
+import System.Directory qualified as Dir
 import System.FilePath ((</>))
-import qualified System.IO.Temp as Temp
-import qualified System.Process as Process
+import System.IO.Temp qualified as Temp
+import System.Process qualified as Process
 import System.Timeout
 import Test.Tasty
 import Test.Tasty.HUnit hiding (assert)

@@ -1,19 +1,19 @@
 module Main where
 
-import qualified Control.Exception as E
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as BL
-import qualified Network.HTTP.Client as HTTP
+import Control.Exception qualified as E
+import Data.ByteString qualified as B
+import Data.ByteString.Lazy qualified as BL
+import Network.HTTP.Client qualified as HTTP
 import Network.HTTP.Client.Internal as HTTP (hostAddress)
 import Network.HTTP.Client.Rustls
-import qualified Network.HTTP.Types as HTTP
+import Network.HTTP.Types qualified as HTTP
 import Network.Socket (tupleToHostAddress)
 import Network.Socket.Wait (wait)
-import qualified Rustls
-import qualified System.Directory as Dir
+import Rustls qualified
+import System.Directory qualified as Dir
 import System.FilePath ((</>))
-import qualified System.IO.Temp as Temp
-import qualified System.Process as Process
+import System.IO.Temp qualified as Temp
+import System.Process qualified as Process
 import Test.Tasty
 import Test.Tasty.HUnit
 

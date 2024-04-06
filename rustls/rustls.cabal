@@ -25,11 +25,9 @@ source-repository head
   type: git
 
 common commons
-  default-language: Haskell2010
-  ghc-options: -Wall -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -Wno-name-shadowing -Wno-unticked-promoted-constructors -fhide-source-paths
-  if impl(ghc >= 8.10)
-    ghc-options: -Wunused-packages
-  default-extensions: BangPatterns BlockArguments CApiFFI CPP DataKinds DeriveAnyClass DeriveGeneric DerivingStrategies ExistentialQuantification GeneralizedNewtypeDeriving KindSignatures LambdaCase MultiWayIf NamedFieldPuns OverloadedStrings PatternSynonyms RecordWildCards RoleAnnotations ScopedTypeVariables StrictData TupleSections TypeApplications ViewPatterns
+  default-language: GHC2021
+  ghc-options: -Wall -Wredundant-constraints -Wunused-packages -Wno-name-shadowing -Wno-unticked-promoted-constructors -fhide-source-paths
+  default-extensions: BlockArguments CApiFFI CPP DataKinds DeriveAnyClass DerivingStrategies LambdaCase MultiWayIf OverloadedStrings PatternSynonyms RecordWildCards RoleAnnotations StrictData ViewPatterns
 
 library
   import: commons
@@ -40,7 +38,7 @@ library
     Rustls.Internal
     Rustls.Internal.FFI
   build-depends:
-      base >= 4.12 && < 5
+      base >= 4.16 && < 5
     , bytestring >= 0.10 && < 0.13
     , text >= 2.0 && < 2.2
     , derive-storable ^>= 0.3

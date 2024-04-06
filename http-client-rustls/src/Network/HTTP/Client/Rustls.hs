@@ -37,15 +37,15 @@ module Network.HTTP.Client.Rustls
   )
 where
 
-import qualified Control.Exception as E
+import Control.Exception qualified as E
 import Data.Acquire (ReleaseType (..))
 import Data.Acquire.Internal (Acquire (..), Allocated (..))
-import qualified Data.ByteString.Builder.Extra as B
-import qualified Data.Text as T
-import qualified Network.HTTP.Client as HTTP
-import qualified Network.HTTP.Client.Internal as HTTP
-import qualified Network.Socket as NS
-import qualified Rustls
+import Data.ByteString.Builder.Extra qualified as B
+import Data.Text qualified as T
+import Network.HTTP.Client qualified as HTTP
+import Network.HTTP.Client.Internal qualified as HTTP
+import Network.Socket qualified as NS
+import Rustls qualified
 
 -- | Get TLS-enabled HTTP 'HTTP.ManagerSettings' from a Rustls
 -- 'Rustls.ClientConfig', consumable via 'HTTP.newManager'.
