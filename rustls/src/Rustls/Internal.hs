@@ -415,7 +415,6 @@ completeIO c@Connection' {..} = go NotEOF
               when (eof == IsEOF) $ fail "rustls: unexpected eof"
               pure False
           if finished then pure eof else go eof
-      where
 
     runWrite = do
       wantsWrite <- getWantsWrite c
