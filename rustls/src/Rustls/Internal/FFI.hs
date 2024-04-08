@@ -267,8 +267,7 @@ foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder
     Ptr WebPkiServerCertVerifierBuilder -> Ptr (Ptr ServerCertVerifier) -> IO Result
 
 foreign import capi unsafe "rustls.h rustls_platform_server_cert_verifier"
-  platformServerCertVerifier ::
-    ConstPtr RootCertStore -> Ptr (Ptr ServerCertVerifier) -> IO Result
+  platformServerCertVerifier :: Ptr (Ptr ServerCertVerifier) -> IO Result
 
 foreign import capi unsafe "rustls.h rustls_server_cert_verifier_free"
   serverCertVerifierFree :: Ptr ServerCertVerifier -> IO ()

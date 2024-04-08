@@ -213,10 +213,7 @@ defaultCipherSuites = peekNonEmpty FFI.defaultCipherSuites FFI.defaultCipherSuit
 defaultClientConfigBuilder :: ClientConfigBuilder
 defaultClientConfigBuilder =
   ClientConfigBuilder
-    { clientConfigServerCertVerifier =
-        PlatformServerCertVerifier
-          { extraServerCertVerifierCertificates = []
-          },
+    { clientConfigServerCertVerifier = PlatformServerCertVerifier,
       clientConfigTLSVersions = [],
       clientConfigCipherSuites = [],
       clientConfigALPNProtocols = [],
@@ -335,9 +332,7 @@ buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
         FFI.clientConfigBuilderFree
 
   mkScv <- case clientConfigServerCertVerifier of
-    PlatformServerCertVerifier {..} -> do
-      rootCertStore <- withRootCertStore extraServerCertVerifierCertificates
-      pure $ FFI.platformServerCertVerifier rootCertStore
+    PlatformServerCertVerifier -> pure FFI.platformServerCertVerifier
     ServerCertVerifier {..} -> do
       rootCertStore <- withRootCertStore $ toList serverCertVerifierCertificates
       scvb <-

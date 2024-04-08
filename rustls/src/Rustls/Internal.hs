@@ -85,9 +85,6 @@ data ServerCertVerifier
     -- certificate facilities, using
     -- [rustls-platform-verifier](https://github.com/rustls/rustls-platform-verifier).
     PlatformServerCertVerifier
-      { -- | Additional certificates used to verify TLS server certificates.
-        extraServerCertVerifierCertificates :: [PEMCertificates]
-      }
   | ServerCertVerifier
       { -- | Certificates used to verify TLS server certificates.
         serverCertVerifierCertificates :: NonEmpty PEMCertificates,

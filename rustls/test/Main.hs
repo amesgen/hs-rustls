@@ -105,17 +105,22 @@ testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
           Just Rustls.AllowAnyAnonymousOrAuthenticatedClient ->
             isJust serverPeerCert /== null clientConfigCertifiedKeys
       Left (ex :: Rustls.RustlsException) -> do
-        label "Expected TLS failure"
         annotate $ E.displayException ex
         if
           | S.fromList clientConfigALPNProtocols
-              `S.disjoint` S.fromList serverConfigALPNProtocols ->
+              `S.disjoint` S.fromList serverConfigALPNProtocols -> do
+              label "Expected TLS failure: No common ALPN protocol"
               success
-          | clientTLSVersions `S.disjoint` serverTLSVersions ->
+          | clientTLSVersions `S.disjoint` serverTLSVersions -> do
+              label "Expected TLS failure: No common TLS version"
               success
           | Just Rustls.AllowAnyAuthenticatedClient <-
               Rustls.clientCertVerifierPolicy <$> serverConfigClientCertVerifier,
-            null clientConfigCertifiedKeys ->
+            null clientConfigCertifiedKeys -> do
+              label "Expected TLS failure: No client cert"
+              success
+          | Rustls.PlatformServerCertVerifier <- clientConfigServerCertVerifier -> do
+              label "Expected TLS failure: Platform verifier denies self-signed cert"
               success
           | otherwise -> failure
   where
@@ -144,19 +149,18 @@ genTestSetup :: (MonadGen m) => MiniCA -> m TestSetup
 genTestSetup MiniCA {..} = do
   commonALPNProtocols <- genALPNProtocols
   clientConfigServerCertVerifier <- do
-    parsing <- Gen.enumBounded
-    serverCertVerifierCertificates <-
-      pure
-        <$> Gen.element
-          [ Rustls.PEMCertificatesInMemory miniCACert parsing,
-            Rustls.PemCertificatesFromFile miniCAFile parsing
-          ]
-    Gen.element
-      [ let extraServerCertVerifierCertificates =
-              NE.toList serverCertVerifierCertificates
-         in Rustls.PlatformServerCertVerifier {..},
-        let serverCertVerifierCRLs = [] -- TODO test this
-         in Rustls.ServerCertVerifier {..}
+    Gen.frequency
+      [ (1, pure Rustls.PlatformServerCertVerifier),
+        (10,) do
+          parsing <- Gen.enumBounded
+          serverCertVerifierCertificates <-
+            pure
+              <$> Gen.element
+                [ Rustls.PEMCertificatesInMemory miniCACert parsing,
+                  Rustls.PemCertificatesFromFile miniCAFile parsing
+                ]
+          let serverCertVerifierCRLs = [] -- TODO test this
+          pure Rustls.ServerCertVerifier {..}
       ]
   clientConfigALPNProtocols <- (commonALPNProtocols <>) <$> genALPNProtocols
   clientConfigEnableSNI <- Gen.bool_
