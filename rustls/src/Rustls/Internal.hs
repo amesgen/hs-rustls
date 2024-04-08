@@ -80,13 +80,18 @@ data ClientConfigBuilder = ClientConfigBuilder
   deriving stock (Show, Generic)
 
 -- | How to verify TLS server certificates.
-data ServerCertVerifier = ServerCertVerifier
-  { -- | Certificates used to verify TLS server certificates.
-    serverCertVerifierCertificates :: NonEmpty PEMCertificates,
-    -- | List of certificate revocation lists used to verify TLS server
-    -- certificates.
-    serverCertVerifierCRLs :: [CertificateRevocationList]
-  }
+data ServerCertVerifier
+  = -- | Verify the validity of TLS certificates based on the operating system's
+    -- certificate facilities, using
+    -- [rustls-platform-verifier](https://github.com/rustls/rustls-platform-verifier).
+    PlatformServerCertVerifier
+  | ServerCertVerifier
+      { -- | Certificates used to verify TLS server certificates.
+        serverCertVerifierCertificates :: NonEmpty PEMCertificates,
+        -- | List of certificate revocation lists used to verify TLS server
+        -- certificates.
+        serverCertVerifierCRLs :: [CertificateRevocationList]
+      }
   deriving stock (Show, Generic)
 
 -- | A source of PEM-encoded certificates.
