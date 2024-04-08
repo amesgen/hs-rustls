@@ -26,9 +26,7 @@
 -- example socket = do
 --   -- It is encouraged to share a single `clientConfig` when creating multiple
 --   -- TLS connections.
---   clientConfig <-
---     Rustls.buildClientConfig $
---       Rustls.defaultClientConfigBuilder serverCertVerifier
+--   clientConfig <- Rustls.buildClientConfig Rustls.defaultClientConfigBuilder
 --   let backend = Rustls.mkSocketBackend socket
 --       newConnection =
 --         Rustls.newClientConnection backend clientConfig "example.org"
@@ -36,18 +34,6 @@
 --     Rustls.writeBS conn "GET /"
 --     recv <- Rustls.readBS conn 1000 -- max number of bytes to read
 --     print recv
---   where
---     -- For now, rustls-ffi does not provide a built-in way to access
---     -- the OS certificate store.
---     serverCertVerifier =
---       Rustls.ServerCertVerifier
---         { Rustls.serverCertVerifierCertificates =
---             pure $
---               Rustls.PemCertificatesFromFile
---                 "/etc/ssl/certs/ca-certificates.crt"
---                 Rustls.PEMCertificateParsingStrict,
---           Rustls.serverCertVerifierCRLs = []
---         }
 -- :}
 --
 -- == Using 'Acquire'
@@ -223,11 +209,14 @@ defaultCipherSuites :: NonEmpty CipherSuite
 defaultCipherSuites = peekNonEmpty FFI.defaultCipherSuites FFI.defaultCipherSuitesLen
 {-# NOINLINE defaultCipherSuites #-}
 
--- | A 'ClientConfigBuilder' with good defaults.
-defaultClientConfigBuilder :: ServerCertVerifier -> ClientConfigBuilder
-defaultClientConfigBuilder serverCertVerifier =
+-- | A 'ClientConfigBuilder' with good defaults, using the OS certificate store.
+defaultClientConfigBuilder :: ClientConfigBuilder
+defaultClientConfigBuilder =
   ClientConfigBuilder
-    { clientConfigServerCertVerifier = serverCertVerifier,
+    { clientConfigServerCertVerifier =
+        PlatformServerCertVerifier
+          { extraServerCertVerifierCertificates = []
+          },
       clientConfigTLSVersions = [],
       clientConfigCipherSuites = [],
       clientConfigALPNProtocols = [],
@@ -345,24 +334,29 @@ buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
         )
         FFI.clientConfigBuilderFree
 
-  let ServerCertVerifier {..} = clientConfigServerCertVerifier
-  rootCertStore <- withRootCertStore $ toList serverCertVerifierCertificates
-  scvb <-
-    ContT $
-      E.bracket
-        (FFI.webPkiServerCertVerifierBuilderNew rootCertStore)
-        FFI.webPkiServerCertVerifierBuilderFree
-  crls :: [CStringLen] <-
-    for serverCertVerifierCRLs $
-      ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
-  liftIO $ for_ crls \(ptr, len) ->
-    FFI.webPkiServerCertVerifierBuilderAddCrl
-      scvb
-      (ConstPtr (castPtr ptr))
-      (intToCSize len)
+  mkScv <- case clientConfigServerCertVerifier of
+    PlatformServerCertVerifier {..} -> do
+      rootCertStore <- withRootCertStore extraServerCertVerifierCertificates
+      pure $ FFI.platformServerCertVerifier rootCertStore
+    ServerCertVerifier {..} -> do
+      rootCertStore <- withRootCertStore $ toList serverCertVerifierCertificates
+      scvb <-
+        ContT $
+          E.bracket
+            (FFI.webPkiServerCertVerifierBuilderNew rootCertStore)
+            FFI.webPkiServerCertVerifierBuilderFree
+      crls :: [CStringLen] <-
+        for serverCertVerifierCRLs $
+          ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
+      liftIO $ for_ crls \(ptr, len) ->
+        FFI.webPkiServerCertVerifierBuilderAddCrl
+          scvb
+          (ConstPtr (castPtr ptr))
+          (intToCSize len)
+      pure $ FFI.webPkiServerCertVerifierBuilderBuild scvb
   scvPtr <- ContT alloca
   let buildScv = do
-        rethrowR =<< FFI.webPkiServerCertVerifierBuilderBuild scvb scvPtr
+        rethrowR =<< mkScv scvPtr
         peek scvPtr
   scv <- ContT $ E.bracket buildScv FFI.serverCertVerifierFree
   liftIO $ FFI.clientConfigBuilderSetServerVerifier builder (ConstPtr scv)

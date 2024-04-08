@@ -151,8 +151,13 @@ genTestSetup MiniCA {..} = do
           [ Rustls.PEMCertificatesInMemory miniCACert parsing,
             Rustls.PemCertificatesFromFile miniCAFile parsing
           ]
-    let serverCertVerifierCRLs = [] -- TODO test this
-    pure Rustls.ServerCertVerifier {..}
+    Gen.element
+      [ let extraServerCertVerifierCertificates =
+              NE.toList serverCertVerifierCertificates
+         in Rustls.PlatformServerCertVerifier {..},
+        let serverCertVerifierCRLs = [] -- TODO test this
+         in Rustls.ServerCertVerifier {..}
+      ]
   clientConfigALPNProtocols <- (commonALPNProtocols <>) <$> genALPNProtocols
   clientConfigEnableSNI <- Gen.bool_
   clientConfigTLSVersions <- genTLSVersions

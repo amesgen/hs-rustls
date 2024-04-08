@@ -10,13 +10,13 @@ rustPlatform.buildRustPackage rec {
   version = "0.13.0";
 
   src = fetchFromGitHub {
-    owner = "rustls";
+    owner = "amesgen";
     repo = "rustls-ffi";
-    rev = "v${version}";
-    hash = "sha256-Bc9bVZ2pDsG118l/SlElZpgh9F1JEgPF8LzBX7d4mhE=";
+    rev = "508ad6acc9f191cf088fbf4ad3369edabd615361";
+    hash = "sha256-FxYdfh8hP/VrAGktDjci7WHdE3waV1wt2fAl/0eUd8s=";
   };
 
-  cargoHash = "sha256-gDQ9AFrJuV7SrzKCAHQBkKj6clXuPLO0DHhnvcBqRLs=";
+  cargoHash = "sha256-z1Uk23wCSikeu0DOZPz2ov2DXPT4oLWx/1JjKCzOqeE=";
 
   patches = lib.optionals buildDylibs [ ./rustls-cdylib.patch ];
 
