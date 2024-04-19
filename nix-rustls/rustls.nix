@@ -12,8 +12,8 @@ rustPlatform.buildRustPackage rec {
   src = fetchFromGitHub {
     owner = "amesgen";
     repo = "rustls-ffi";
-    rev = "a16b4569ce04fe49e5803d8b834f3279ae9ea03c";
-    hash = "sha256-lRKuvxfm2WeY3qRFCUZi3Sj83OZ41wo4WqmKzLmyAMM=";
+    rev = "819ba4bcd3d9fbece2e6b1b3b3d92f025df3e7fb";
+    hash = "sha256-Uq0FNJ6/cDbdOlxtlw6Gecng8xYy+IFU6QhaFG20j2A=";
   };
 
   cargoHash = "sha256-rHTdX7E3CPdaU5Rj4b/vECpMvKCe9Rbau60QA1hIP28=";

@@ -331,8 +331,8 @@ buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
         )
         FFI.clientConfigBuilderFree
 
-  mkScv <- case clientConfigServerCertVerifier of
-    PlatformServerCertVerifier -> pure FFI.platformServerCertVerifier
+  scv <- case clientConfigServerCertVerifier of
+    PlatformServerCertVerifier -> liftIO FFI.platformServerCertVerifier
     ServerCertVerifier {..} -> do
       rootCertStore <- withRootCertStore $ toList serverCertVerifierCertificates
       scvb <-
@@ -348,12 +348,11 @@ buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
           scvb
           (ConstPtr (castPtr ptr))
           (intToCSize len)
-      pure $ FFI.webPkiServerCertVerifierBuilderBuild scvb
-  scvPtr <- ContT alloca
-  let buildScv = do
-        rethrowR =<< mkScv scvPtr
-        peek scvPtr
-  scv <- ContT $ E.bracket buildScv FFI.serverCertVerifierFree
+      scvPtr <- ContT alloca
+      let buildScv = do
+            rethrowR =<< FFI.webPkiServerCertVerifierBuilderBuild scvb scvPtr
+            peek scvPtr
+      ContT $ E.bracket buildScv FFI.serverCertVerifierFree
   liftIO $ FFI.clientConfigBuilderSetServerVerifier builder (ConstPtr scv)
 
   (alpnPtr, len) <- withALPNProtocols clientConfigALPNProtocols

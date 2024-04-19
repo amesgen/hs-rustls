@@ -5,6 +5,7 @@
 -- >>> import qualified Network.HTTP.Client as HTTP
 -- >>> import qualified Network.HTTP.Client.Rustls as HTTP
 -- >>> :{
+-- example :: IO ()
 -- example = do
 --   mgr <- HTTP.newRustlsManager -- this should be shared across multiple requests
 --   req <- HTTP.parseUrlThrow "https://example.org"
@@ -28,8 +29,8 @@ import Network.HTTP.Client.Internal qualified as HTTP
 import Network.Socket qualified as NS
 import Rustls qualified
 
--- | Create a new 'HTTP.Manager' using good TLS defaults and using the OS
--- certificate store.
+-- | Create a new 'HTTP.Manager' using good TLS defaults and the OS certificate
+-- store.
 newRustlsManager :: (MonadIO m) => m HTTP.Manager
 newRustlsManager = liftIO do
   clientConfig <- Rustls.buildClientConfig Rustls.defaultClientConfigBuilder
