@@ -10,10 +10,10 @@ rustPlatform.buildRustPackage rec {
   version = "0.13.0";
 
   src = fetchFromGitHub {
-    owner = "amesgen";
+    owner = "rustls";
     repo = "rustls-ffi";
-    rev = "819ba4bcd3d9fbece2e6b1b3b3d92f025df3e7fb";
-    hash = "sha256-Uq0FNJ6/cDbdOlxtlw6Gecng8xYy+IFU6QhaFG20j2A=";
+    rev = "6342e487b11ffe50fff24205e251b978f0502f2f";
+    hash = "sha256-QcdWPXgNf2uSw8KRo8j2tgTaQYga4HQ/oDe+J5eDMeI=";
   };
 
   cargoHash = "sha256-rHTdX7E3CPdaU5Rj4b/vECpMvKCe9Rbau60QA1hIP28=";
