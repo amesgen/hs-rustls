@@ -16,7 +16,7 @@ jobs:
         with:
           extra_nix_config: |
             accept-flake-config = true
-      - uses: DeterminateSystems/magic-nix-cache-action@v4
+      - uses: DeterminateSystems/magic-nix-cache-action@v6
 
       - name: Build and test
         run: nix build ./nix-rustls#ci
@@ -29,7 +29,7 @@ jobs:
         with:
           extra_nix_config: |
             accept-flake-config = true
-      - uses: DeterminateSystems/magic-nix-cache-action@v4
+      - uses: DeterminateSystems/magic-nix-cache-action@v6
 
       - name: Build and test
         run: nix build .#ci
