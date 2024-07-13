@@ -23,6 +23,7 @@
               inherit (prev.nur.repos.amesgen)
                 ormolu
                 cabal-docspec
+                cabal-gild
                 cabal-install
                 ;
             })
@@ -61,10 +62,11 @@
             src = ./.;
             hooks = {
               ormolu.enable = true;
+              cabal-gild.enable = true;
               nixpkgs-fmt.enable = true;
               deadnix.enable = true;
             };
-            tools = { inherit (pkgs) ormolu; };
+            tools = { inherit (pkgs) ormolu cabal-gild; };
           };
           doctests = pkgs.runCommandCC "test-cabal-docspec"
             {
