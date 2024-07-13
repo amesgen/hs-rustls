@@ -1,16 +1,14 @@
 {
   inputs = {
-    haskellNix.url = "github:input-output-hk/haskell.nix";
+    haskellNix = {
+      url = "github:input-output-hk/haskell.nix";
+      inputs.stackage.url = "github:input-output-hk/empty-flake";
+    };
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
     nur.url = "github:nix-community/nur";
     flake-utils.url = "github:numtide/flake-utils";
     get-flake.url = "github:ursi/get-flake";
-    pre-commit-hooks = {
-      url = "github:cachix/pre-commit-hooks.nix";
-      # TODO the nixpkgs from haskellNix is too old
-      # inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
-    };
+    pre-commit-hooks.url = "github:cachix/git-hooks.nix";
   };
   outputs = inputs@{ self, nixpkgs, flake-utils, get-flake, ... }:
     flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
@@ -21,7 +19,14 @@
           overlays = [
             inputs.haskellNix.overlay
             inputs.nur.overlay
-            (_: prev: { inherit (prev.nur.repos.amesgen) ormolu cabal-docspec; })
+            (_: prev: {
+              inherit (prev.nur.repos.amesgen)
+                ormolu
+                cabal-docspec
+                cabal-gild
+                cabal-install
+                ;
+            })
             (get-flake ./nix-rustls).overlays.default
             # ghci(d) needs dynamic libs
             (_: prev: { rustls = prev.rustls.override (_: { buildDylibs = true; }); })
@@ -32,7 +37,7 @@
         projectPackages = [ "rustls" "http-client-rustls" ];
         hsPkgs = haskell-nix.cabalProject {
           src = ./.;
-          compiler-nix-name = "ghc98";
+          compiler-nix-name = "ghc910";
           modules = [
             { packages = lib.genAttrs projectPackages (_: { ghcOptions = [ "-Werror" ]; }); }
             {
@@ -57,10 +62,11 @@
             src = ./.;
             hooks = {
               ormolu.enable = true;
+              cabal-gild.enable = true;
               nixpkgs-fmt.enable = true;
               deadnix.enable = true;
             };
-            tools = { inherit (pkgs) ormolu; };
+            tools = { inherit (pkgs) ormolu cabal-gild; };
           };
           doctests = pkgs.runCommandCC "test-cabal-docspec"
             {
@@ -76,13 +82,12 @@
           '';
         };
         devShells.default = hsPkgs.shellFor {
-          tools = { cabal = { }; };
           buildInputs = [
             pkgs.minica
             pkgs.miniserve
+            pkgs.cabal-install
             pkgs.cabal-docspec
-            pkgs.ormolu
-          ];
+          ] ++ self.checks.${system}.pre-commit-check.enabledPackages;
           LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.rustls ];
           withHoogle = false;
           inherit (self.checks.${system}.pre-commit-check) shellHook;
