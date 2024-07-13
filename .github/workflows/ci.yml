@@ -44,6 +44,7 @@ jobs:
           - '9.4'
           - '9.6'
           - '9.8'
+          - '9.10'
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@V27
@@ -83,4 +84,4 @@ jobs:
       - name: Build
         run: cabal build all
       - name: Run tests
-        run: cabal test all --test-show-details=direct
+        run: cabal test all
