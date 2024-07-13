@@ -12,11 +12,11 @@ rustPlatform.buildRustPackage rec {
   src = fetchFromGitHub {
     owner = "rustls";
     repo = "rustls-ffi";
-    rev = "v${version}";
-    hash = "sha256-Bc9bVZ2pDsG118l/SlElZpgh9F1JEgPF8LzBX7d4mhE=";
+    rev = "fe0415310112c441c2673cc4a6eb7243c456af12";
+    hash = "sha256-sQo/K51BcZfHEEg4lcQh2/ZZ8VE8RFHuhuyN5gkxKY0=";
   };
 
-  cargoHash = "sha256-gDQ9AFrJuV7SrzKCAHQBkKj6clXuPLO0DHhnvcBqRLs=";
+  cargoHash = "sha256-i84i9XxqDj+KHgklHNYrN8BUmXn+bZZLzbr2de1aGZk=";
 
   patches = lib.optionals buildDylibs [ ./rustls-cdylib.patch ];
 

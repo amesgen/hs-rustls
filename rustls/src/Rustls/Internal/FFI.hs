@@ -21,6 +21,7 @@ module Rustls.Internal.FFI
     webPkiServerCertVerifierBuilderAddCrl,
     webPkiServerCertVerifierBuilderFree,
     webPkiServerCertVerifierBuilderBuild,
+    platformServerCertVerifier,
     serverCertVerifierFree,
     clientConfigBuilderSetServerVerifier,
 
@@ -264,6 +265,9 @@ foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder
 foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder_build"
   webPkiServerCertVerifierBuilderBuild ::
     Ptr WebPkiServerCertVerifierBuilder -> Ptr (Ptr ServerCertVerifier) -> IO Result
+
+foreign import capi unsafe "rustls.h rustls_platform_server_cert_verifier"
+  platformServerCertVerifier :: IO (Ptr ServerCertVerifier)
 
 foreign import capi unsafe "rustls.h rustls_server_cert_verifier_free"
   serverCertVerifierFree :: Ptr ServerCertVerifier -> IO ()
