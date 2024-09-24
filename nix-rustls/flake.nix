@@ -8,10 +8,9 @@
       rustlsFromPkgs = pkgs: pkgs.callPackage (import ./rustls.nix) { };
     in
     { overlays.default = _: prev: { rustls = rustlsFromPkgs prev; }; } //
-    flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
+    flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        inherit (pkgs) lib;
         rustls = rustlsFromPkgs pkgs;
       in
       {
@@ -20,11 +19,11 @@
           inherit rustls;
           rustls-with-dylibs = rustls.override { buildDylibs = true; };
           rustls-static = rustlsFromPkgs pkgs.pkgsStatic;
-          ci = pkgs.linkFarm "nix-rustls-ci" (lib.mapAttrsToList (k: v: { name = k; path = v; }) {
+          ci = pkgs.linkFarm "nix-rustls-ci" {
             inherit (self.packages.${system})
               rustls
               rustls-with-dylibs;
-          });
+          };
         };
         devShells.default =
           let

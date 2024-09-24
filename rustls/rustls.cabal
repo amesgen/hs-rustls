@@ -60,7 +60,9 @@ library
   build-depends:
     base >=4.16 && <5,
     bytestring >=0.10 && <0.13,
+    containers >=0.6 && <0.8,
     derive-storable ^>=0.3,
+    mtl >=2.2 && <2.4,
     network >=3.1 && <3.3,
     resourcet ^>=1.2 || ^>=1.3,
     text >=2.0 && <2.2,
@@ -83,7 +85,7 @@ test-suite tasty
     async ^>=2.2,
     base,
     bytestring,
-    containers >=0.6 && <0.8,
+    containers,
     directory ^>=1.3,
     filepath >=1.4 && <1.6,
     hedgehog >=1.0 && <1.5,

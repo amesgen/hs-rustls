@@ -62,19 +62,21 @@ main = defaultMain $ withRustlsManagerAndServer \(fmap fst -> mgr) ->
 
           let cp = Process.proc "minica" ["-domains", "example.org"]
           _ <- Process.readCreateProcess (cp {Process.cwd = Just tmpDir}) ""
+          builder <- Rustls.defaultClientConfigBuilder
           mgr <-
             HTTP.newManager . rustlsManagerSettings
               =<< Rustls.buildClientConfig
-                ( Rustls.defaultClientConfigBuilder
-                    Rustls.ServerCertVerifier
-                      { Rustls.serverCertVerifierCertificates =
-                          pure $
-                            Rustls.PemCertificatesFromFile
-                              (tmpDir </> "minica.pem")
-                              Rustls.PEMCertificateParsingStrict,
-                        Rustls.serverCertVerifierCRLs = []
-                      }
-                )
+                builder
+                  { Rustls.clientConfigServerCertVerifier =
+                      Rustls.ServerCertVerifier
+                        { Rustls.serverCertVerifierCertificates =
+                            pure $
+                              Rustls.PemCertificatesFromFile
+                                (tmpDir </> "minica.pem")
+                                Rustls.PEMCertificateParsingStrict,
+                          Rustls.serverCertVerifierCRLs = []
+                        }
+                  }
           B.writeFile (tmpDir </> "file") $ B.replicate fileLength fileByte
           procInfo <-
             Process.createProcess $
