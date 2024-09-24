@@ -12,7 +12,6 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
 import Data.ByteString.Unsafe qualified as BU
 import Data.Coerce (coerce)
-import Data.Function (on)
 import Data.Functor (void)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
@@ -26,47 +25,58 @@ import Rustls.Internal.FFI (ConstPtr (..))
 import Rustls.Internal.FFI qualified as FFI
 import System.IO.Unsafe (unsafePerformIO)
 
+-- | A cryptography provider for Rustls.
+--
+-- In particular, this contains the set of supported TLS cipher suites.
+newtype CryptoProvider = CryptoProvider
+  { unCryptoProvider :: ForeignPtr FFI.CryptoProvider
+  }
+
+instance Show CryptoProvider where
+  show _ = "CryptoProvider"
+
 -- | An ALPN protocol ID. See
 -- <https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids>
 -- for a list of registered IDs.
 newtype ALPNProtocol = ALPNProtocol {unALPNProtocol :: ByteString}
   deriving stock (Show, Eq, Ord, Generic)
 
--- | A TLS cipher suite supported by Rustls.
-newtype CipherSuite = CipherSuite (ConstPtr FFI.SupportedCipherSuite)
+-- | A TLS cipher suite supported by a Rustls cryptography provider.
+data CipherSuite = CipherSuite
+  { -- | The IANA value of the cipher suite. The bytes are interpreted in
+    -- network order.
+    --
+    -- See
+    -- <https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-4>
+    -- for a list.
+    cipherSuiteID :: Word16,
+    -- | The text representation of the cipher suite.
+    cipherSuiteName :: Text,
+    -- | The TLS version of the cipher suite.
+    cipherSuiteTLSVersion :: FFI.TLSVersion
+  }
+  deriving stock (Show, Eq, Ord, Generic)
 
--- | Get the IANA value from a cipher suite. The bytes are interpreted in network order.
---
--- See <https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-4> for a list.
-cipherSuiteID :: CipherSuite -> Word16
-cipherSuiteID (CipherSuite cipherSuitePtr) =
-  FFI.supportedCipherSuiteGetSuite cipherSuitePtr
-
-instance Eq CipherSuite where
-  (==) = (==) `on` cipherSuiteID
-
-instance Ord CipherSuite where
-  compare = compare `on` cipherSuiteID
-
--- | Get the text representation of a cipher suite.
-showCipherSuite :: CipherSuite -> Text
-showCipherSuite (CipherSuite cipherSuitePtr) = unsafePerformIO $
-  alloca \strPtr -> do
-    FFI.hsSupportedCipherSuiteGetName cipherSuitePtr strPtr
-    strToText =<< peek strPtr
-
-instance Show CipherSuite where
-  show = T.unpack . showCipherSuite
+-- | A negotiated TLS cipher suite. Subset of 'CipherSuite'.
+data NegotiatedCipherSuite = NegotiatedCipherSuite
+  { -- | The IANA value of the cipher suite. The bytes are interpreted in
+    -- network order.
+    --
+    -- See
+    -- <https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-4>
+    -- for a list.
+    negotiatedCipherSuiteID :: Word16,
+    -- | The text representation of the cipher suite.
+    negotiatedCipherSuiteName :: Text
+  }
+  deriving stock (Show, Eq, Ord, Generic)
 
 -- | Rustls client config builder.
 data ClientConfigBuilder = ClientConfigBuilder
-  { -- | The server certificate verifier.
+  { -- | The cryptography provider.
+    clientConfigCryptoProvider :: CryptoProvider,
+    -- | The server certificate verifier.
     clientConfigServerCertVerifier :: ServerCertVerifier,
-    -- | Supported 'FFI.TLSVersion's. When empty, good defaults are used.
-    clientConfigTLSVersions :: [FFI.TLSVersion],
-    -- | Supported 'CipherSuite's in order of preference. When empty, good
-    -- defaults are used.
-    clientConfigCipherSuites :: [CipherSuite],
     -- | ALPN protocols.
     clientConfigALPNProtocols :: [ALPNProtocol],
     -- | Whether to enable Server Name Indication. Defaults to 'True'.
@@ -80,13 +90,18 @@ data ClientConfigBuilder = ClientConfigBuilder
   deriving stock (Show, Generic)
 
 -- | How to verify TLS server certificates.
-data ServerCertVerifier = ServerCertVerifier
-  { -- | Certificates used to verify TLS server certificates.
-    serverCertVerifierCertificates :: NonEmpty PEMCertificates,
-    -- | List of certificate revocation lists used to verify TLS server
-    -- certificates.
-    serverCertVerifierCRLs :: [CertificateRevocationList]
-  }
+data ServerCertVerifier
+  = -- | Verify the validity of TLS certificates based on the operating system's
+    -- certificate facilities, using
+    -- [rustls-platform-verifier](https://github.com/rustls/rustls-platform-verifier).
+    PlatformServerCertVerifier
+  | ServerCertVerifier
+      { -- | Certificates used to verify TLS server certificates.
+        serverCertVerifierCertificates :: NonEmpty PEMCertificates,
+        -- | List of certificate revocation lists used to verify TLS server
+        -- certificates.
+        serverCertVerifierCRLs :: [CertificateRevocationList]
+      }
   deriving stock (Show, Generic)
 
 -- | A source of PEM-encoded certificates.
@@ -165,14 +180,10 @@ newtype CertificateRevocationList = CertificateRevocationList
 
 -- | Rustls client config builder.
 data ServerConfigBuilder = ServerConfigBuilder
-  { -- | List of 'CertifiedKey's.
+  { -- | The cryptography provider.
+    serverConfigCryptoProvider :: CryptoProvider,
+    -- | List of 'CertifiedKey's.
     serverConfigCertifiedKeys :: NonEmpty CertifiedKey,
-    -- | Supported 'FFI.TLSVersion's. When empty, good defaults are
-    -- used.
-    serverConfigTLSVersions :: [FFI.TLSVersion],
-    -- | Supported 'CipherSuite's in order of preference. When empty, good
-    -- defaults are used.
-    serverConfigCipherSuites :: [CipherSuite],
     -- | ALPN protocols.
     serverConfigALPNProtocols :: [ALPNProtocol],
     -- | Ignore the client's ciphersuite order. Defaults to 'False'.

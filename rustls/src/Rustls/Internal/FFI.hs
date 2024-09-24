@@ -17,10 +17,11 @@ module Rustls.Internal.FFI
     clientConfigBuilderSetCertifiedKey,
     WebPkiServerCertVerifierBuilder,
     ServerCertVerifier,
-    webPkiServerCertVerifierBuilderNew,
+    webPkiServerCertVerifierBuilderNewWithProvider,
     webPkiServerCertVerifierBuilderAddCrl,
     webPkiServerCertVerifierBuilderFree,
     webPkiServerCertVerifierBuilderBuild,
+    platformServerCertVerifierWithProvider,
     serverCertVerifierFree,
     clientConfigBuilderSetServerVerifier,
 
@@ -42,7 +43,7 @@ module Rustls.Internal.FFI
     serverConfigBuilderSetCertifiedKeys,
     WebPkiClientCertVerifierBuilder,
     ClientCertVerifier,
-    webPkiClientCertVerifierBuilderNew,
+    webPkiClientCertVerifierBuilderNewWithProvider,
     webPkiClientCertVerifierBuilderAddCrl,
     webPkiClientCertVerifierBuilderAllowUnauthenticated,
     webPkiClientCertVerifierBuilderFree,
@@ -85,6 +86,7 @@ module Rustls.Internal.FFI
     connectionGetALPNProtocol,
     connectionGetProtocolVersion,
     connectionGetNegotiatedCipherSuite,
+    connectionGetNegotiatedCipherSuiteName,
     serverConnectionGetSNIHostname,
     connectionGetPeerCertificate,
 
@@ -117,19 +119,24 @@ module Rustls.Internal.FFI
 
     -- ** TLS params
     SupportedCipherSuite,
-    allCipherSuites,
-    allCipherSuitesLen,
-    defaultCipherSuites,
-    defaultCipherSuitesLen,
     supportedCipherSuiteGetSuite,
     hsSupportedCipherSuiteGetName,
+    hsSupportedCiphersuiteProtocolVersion,
     TLSVersion (..),
     pattern TLS12,
     pattern TLS13,
-    allVersions,
-    allVersionsLen,
-    defaultVersions,
-    defaultVersionsLen,
+
+    -- ** Crypto provider
+    CryptoProvider,
+    CryptoProviderBuilder,
+    cryptoProviderBuilderNewFromDefault,
+    cryptoProviderBuilderNewWithBase,
+    cryptoProviderBuilderSetCipherSuites,
+    cryptoProviderBuilderBuild,
+    cryptoProviderBuilderFree,
+    cryptoProviderFree,
+    cryptoProviderCiphersuitesLen,
+    cryptoProviderCiphersuitesGet,
 
     -- ** Root cert store
     RootCertStoreBuilder,
@@ -206,8 +213,7 @@ data {-# CTYPE "rustls.h" "rustls_client_config_builder" #-} ClientConfigBuilder
 
 foreign import capi unsafe "rustls.h rustls_client_config_builder_new_custom"
   clientConfigBuilderNewCustom ::
-    ConstPtr (ConstPtr SupportedCipherSuite) ->
-    CSize ->
+    ConstPtr CryptoProvider ->
     ConstPtr TLSVersion ->
     CSize ->
     Ptr (Ptr ClientConfigBuilder) ->
@@ -217,7 +223,8 @@ foreign import capi unsafe "rustls.h rustls_client_config_builder_free"
   clientConfigBuilderFree :: Ptr ClientConfigBuilder -> IO ()
 
 foreign import capi unsafe "rustls.h rustls_client_config_builder_build"
-  clientConfigBuilderBuild :: Ptr ClientConfigBuilder -> IO (ConstPtr ClientConfig)
+  clientConfigBuilderBuild ::
+    Ptr ClientConfigBuilder -> Ptr (ConstPtr ClientConfig) -> IO Result
 
 foreign import capi unsafe "rustls.h &rustls_client_config_free"
   clientConfigFree :: FinalizerPtr ClientConfig
@@ -249,9 +256,11 @@ data
   {-# CTYPE "rustls.h" "rustls_server_cert_verifier" #-}
   ServerCertVerifier
 
-foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder_new"
-  webPkiServerCertVerifierBuilderNew ::
-    ConstPtr RootCertStore -> IO (Ptr WebPkiServerCertVerifierBuilder)
+foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder_new_with_provider"
+  webPkiServerCertVerifierBuilderNewWithProvider ::
+    ConstPtr CryptoProvider ->
+    ConstPtr RootCertStore ->
+    IO (Ptr WebPkiServerCertVerifierBuilder)
 
 foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder_add_crl"
   webPkiServerCertVerifierBuilderAddCrl ::
@@ -265,6 +274,10 @@ foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder
   webPkiServerCertVerifierBuilderBuild ::
     Ptr WebPkiServerCertVerifierBuilder -> Ptr (Ptr ServerCertVerifier) -> IO Result
 
+foreign import capi unsafe "rustls.h rustls_platform_server_cert_verifier_with_provider"
+  platformServerCertVerifierWithProvider ::
+    ConstPtr CryptoProvider -> IO (Ptr ServerCertVerifier)
+
 foreign import capi unsafe "rustls.h rustls_server_cert_verifier_free"
   serverCertVerifierFree :: Ptr ServerCertVerifier -> IO ()
 
@@ -273,14 +286,14 @@ foreign import capi unsafe "rustls.h rustls_client_config_builder_set_server_ver
     Ptr ClientConfigBuilder -> ConstPtr ServerCertVerifier -> IO ()
 
 -- Server
+
 data {-# CTYPE "rustls.h" "rustls_server_config" #-} ServerConfig
 
 data {-# CTYPE "rustls.h" "rustls_server_config_builder" #-} ServerConfigBuilder
 
 foreign import capi unsafe "rustls.h rustls_server_config_builder_new_custom"
   serverConfigBuilderNewCustom ::
-    ConstPtr (ConstPtr SupportedCipherSuite) ->
-    CSize ->
+    ConstPtr CryptoProvider ->
     ConstPtr TLSVersion ->
     CSize ->
     Ptr (Ptr ServerConfigBuilder) ->
@@ -290,7 +303,8 @@ foreign import capi unsafe "rustls.h rustls_server_config_builder_free"
   serverConfigBuilderFree :: Ptr ServerConfigBuilder -> IO ()
 
 foreign import capi unsafe "rustls.h rustls_server_config_builder_build"
-  serverConfigBuilderBuild :: Ptr ServerConfigBuilder -> IO (ConstPtr ServerConfig)
+  serverConfigBuilderBuild ::
+    Ptr ServerConfigBuilder -> Ptr (ConstPtr ServerConfig) -> IO Result
 
 foreign import capi unsafe "rustls.h &rustls_server_config_free"
   serverConfigFree :: FinalizerPtr ServerConfig
@@ -319,9 +333,11 @@ data
 
 -- TODO all features?
 
-foreign import capi unsafe "rustls.h rustls_web_pki_client_cert_verifier_builder_new"
-  webPkiClientCertVerifierBuilderNew ::
-    ConstPtr RootCertStore -> IO (Ptr WebPkiClientCertVerifierBuilder)
+foreign import capi unsafe "rustls.h rustls_web_pki_client_cert_verifier_builder_new_with_provider"
+  webPkiClientCertVerifierBuilderNewWithProvider ::
+    ConstPtr CryptoProvider ->
+    ConstPtr RootCertStore ->
+    IO (Ptr WebPkiClientCertVerifierBuilder)
 
 foreign import capi unsafe "rustls.h rustls_web_pki_client_cert_verifier_builder_add_crl"
   webPkiClientCertVerifierBuilderAddCrl ::
@@ -383,7 +399,10 @@ foreign import capi unsafe "rustls.h rustls_connection_get_protocol_version"
   connectionGetProtocolVersion :: ConstPtr Connection -> IO TLSVersion
 
 foreign import capi unsafe "rustls.h rustls_connection_get_negotiated_ciphersuite"
-  connectionGetNegotiatedCipherSuite :: ConstPtr Connection -> IO (ConstPtr SupportedCipherSuite)
+  connectionGetNegotiatedCipherSuite :: ConstPtr Connection -> IO Word16
+
+foreign import capi unsafe "rustls.h hs_rustls_connection_get_negotiated_ciphersuite_name"
+  connectionGetNegotiatedCipherSuiteName :: ConstPtr Connection -> Ptr Str -> IO ()
 
 foreign import capi unsafe "rustls.h rustls_server_connection_get_server_name"
   serverConnectionGetSNIHostname :: ConstPtr Connection -> Ptr Word8 -> CSize -> Ptr CSize -> IO Result
@@ -455,23 +474,14 @@ foreign import capi unsafe "rustls.h rustls_certificate_get_der"
 
 data {-# CTYPE "rustls.h" "rustls_supported_ciphersuite" #-} SupportedCipherSuite
 
-foreign import capi "rustls.h value RUSTLS_ALL_CIPHER_SUITES"
-  allCipherSuites :: ConstPtr (Ptr SupportedCipherSuite)
-
-foreign import capi "rustls.h value RUSTLS_ALL_CIPHER_SUITES_LEN"
-  allCipherSuitesLen :: CSize
-
-foreign import capi "rustls.h value RUSTLS_DEFAULT_CIPHER_SUITES"
-  defaultCipherSuites :: ConstPtr (ConstPtr SupportedCipherSuite)
-
-foreign import capi "rustls.h value RUSTLS_DEFAULT_CIPHER_SUITES_LEN"
-  defaultCipherSuitesLen :: CSize
-
 foreign import capi unsafe "rustls.h rustls_supported_ciphersuite_get_suite"
   supportedCipherSuiteGetSuite :: ConstPtr SupportedCipherSuite -> Word16
 
 foreign import capi unsafe "hs_rustls.h hs_rustls_supported_ciphersuite_get_name"
   hsSupportedCipherSuiteGetName :: ConstPtr SupportedCipherSuite -> Ptr Str -> IO ()
+
+foreign import capi unsafe "hs_rustls.h hs_rustls_supported_ciphersuite_protocol_version"
+  hsSupportedCiphersuiteProtocolVersion :: ConstPtr SupportedCipherSuite -> IO TLSVersion
 
 -- | A TLS protocol version supported by Rustls.
 newtype {-# CTYPE "stdint.h" "uint16_t" #-} TLSVersion = TLSVersion
@@ -484,17 +494,43 @@ pattern TLS12, TLS13 :: TLSVersion
 pattern TLS12 = TLSVersion 0x0303
 pattern TLS13 = TLSVersion 0x0304
 
-foreign import capi "rustls.h value RUSTLS_ALL_VERSIONS"
-  allVersions :: ConstPtr TLSVersion
+-- Crypto provider
 
-foreign import capi "rustls.h value RUSTLS_ALL_VERSIONS_LEN"
-  allVersionsLen :: CSize
+data {-# CTYPE "rustls.h" "rustls_crypto_provider" #-} CryptoProvider
 
-foreign import capi "rustls.h value RUSTLS_DEFAULT_VERSIONS"
-  defaultVersions :: ConstPtr TLSVersion
+data {-# CTYPE "rustls.h" "rustls_crypto_provider_builder" #-} CryptoProviderBuilder
 
-foreign import capi "rustls.h value RUSTLS_DEFAULT_VERSIONS_LEN"
-  defaultVersionsLen :: CSize
+foreign import capi unsafe "rustls.h rustls_crypto_provider_builder_new_from_default"
+  cryptoProviderBuilderNewFromDefault :: Ptr (Ptr CryptoProviderBuilder) -> IO Result
+
+foreign import capi unsafe "rustls.h rustls_crypto_provider_builder_new_with_base"
+  cryptoProviderBuilderNewWithBase :: ConstPtr CryptoProvider -> IO (Ptr CryptoProviderBuilder)
+
+foreign import capi unsafe "rustls.h rustls_crypto_provider_builder_set_cipher_suites"
+  cryptoProviderBuilderSetCipherSuites ::
+    Ptr CryptoProviderBuilder ->
+    ConstPtr (ConstPtr SupportedCipherSuite) ->
+    CSize ->
+    IO Result
+
+foreign import capi unsafe "rustls.h rustls_crypto_provider_builder_build"
+  cryptoProviderBuilderBuild ::
+    Ptr CryptoProviderBuilder ->
+    Ptr (ConstPtr CryptoProvider) ->
+    IO Result
+
+foreign import capi unsafe "rustls.h rustls_crypto_provider_builder_free"
+  cryptoProviderBuilderFree :: Ptr CryptoProviderBuilder -> IO ()
+
+foreign import capi unsafe "rustls.h &rustls_crypto_provider_free"
+  cryptoProviderFree :: FinalizerPtr CryptoProvider
+
+foreign import capi unsafe "rustls.h rustls_crypto_provider_ciphersuites_len"
+  cryptoProviderCiphersuitesLen :: ConstPtr CryptoProvider -> CSize
+
+foreign import capi unsafe "rustls.h rustls_crypto_provider_ciphersuites_get"
+  cryptoProviderCiphersuitesGet ::
+    ConstPtr CryptoProvider -> CSize -> ConstPtr SupportedCipherSuite
 
 -- Root cert store
 

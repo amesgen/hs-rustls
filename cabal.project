@@ -1,3 +1,7 @@
 packages:
   rustls
   http-client-rustls
+
+tests: True
+
+multi-repl: True

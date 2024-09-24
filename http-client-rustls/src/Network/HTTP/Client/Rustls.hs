@@ -2,42 +2,24 @@
 -- [http-client](https://hackage.haskell.org/package/http-client) and
 -- [Rustls](https://github.com/rustls/rustls).
 --
--- >>> import qualified Rustls
 -- >>> import qualified Network.HTTP.Client as HTTP
+-- >>> import qualified Network.HTTP.Client.Rustls as HTTP
 -- >>> :{
--- newRustlsManager :: IO HTTP.Manager
--- newRustlsManager = do
---   clientConfig <-
---     Rustls.buildClientConfig $
---       Rustls.defaultClientConfigBuilder serverCertVerifier
---   HTTP.newManager $ rustlsManagerSettings clientConfig
---   where
---     -- For now, rustls-ffi does not provide a built-in way to access
---     -- the OS certificate store.
---     serverCertVerifier =
---       Rustls.ServerCertVerifier
---         { Rustls.serverCertVerifierCertificates =
---             pure $
---               Rustls.PemCertificatesFromFile
---                 "/etc/ssl/certs/ca-certificates.crt"
---                 Rustls.PEMCertificateParsingStrict,
---           Rustls.serverCertVerifierCRLs = []
---         }
--- >>> :}
---
--- >>> :{
+-- example :: IO ()
 -- example = do
---   mgr <- newRustlsManager -- this should be shared across multiple requests
+--   mgr <- HTTP.newRustlsManager -- this should be shared across multiple requests
 --   req <- HTTP.parseUrlThrow "https://example.org"
 --   res <- HTTP.httpLbs req mgr
 --   print $ HTTP.responseBody res
 -- :}
 module Network.HTTP.Client.Rustls
-  ( rustlsManagerSettings,
+  ( newRustlsManager,
+    rustlsManagerSettings,
   )
 where
 
 import Control.Exception qualified as E
+import Control.Monad.IO.Class (MonadIO (..))
 import Data.Acquire (ReleaseType (..))
 import Data.Acquire.Internal (Acquire (..), Allocated (..))
 import Data.ByteString.Builder.Extra qualified as B
@@ -46,6 +28,13 @@ import Network.HTTP.Client qualified as HTTP
 import Network.HTTP.Client.Internal qualified as HTTP
 import Network.Socket qualified as NS
 import Rustls qualified
+
+-- | Create a new 'HTTP.Manager' using good TLS defaults and the OS certificate
+-- store.
+newRustlsManager :: (MonadIO m) => m HTTP.Manager
+newRustlsManager = liftIO do
+  clientConfig <- Rustls.buildClientConfig =<< Rustls.defaultClientConfigBuilder
+  HTTP.newManager $ rustlsManagerSettings clientConfig
 
 -- | Get TLS-enabled HTTP 'HTTP.ManagerSettings' from a Rustls
 -- 'Rustls.ClientConfig', consumable via 'HTTP.newManager'.

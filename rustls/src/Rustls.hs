@@ -27,8 +27,7 @@
 --   -- It is encouraged to share a single `clientConfig` when creating multiple
 --   -- TLS connections.
 --   clientConfig <-
---     Rustls.buildClientConfig $
---       Rustls.defaultClientConfigBuilder serverCertVerifier
+--     Rustls.buildClientConfig =<< Rustls.defaultClientConfigBuilder
 --   let backend = Rustls.mkSocketBackend socket
 --       newConnection =
 --         Rustls.newClientConnection backend clientConfig "example.org"
@@ -36,18 +35,6 @@
 --     Rustls.writeBS conn "GET /"
 --     recv <- Rustls.readBS conn 1000 -- max number of bytes to read
 --     print recv
---   where
---     -- For now, rustls-ffi does not provide a built-in way to access
---     -- the OS certificate store.
---     serverCertVerifier =
---       Rustls.ServerCertVerifier
---         { Rustls.serverCertVerifierCertificates =
---             pure $
---               Rustls.PemCertificatesFromFile
---                 "/etc/ssl/certs/ca-certificates.crt"
---                 Rustls.PEMCertificateParsingStrict,
---           Rustls.serverCertVerifierCRLs = []
---         }
 -- :}
 --
 -- == Using 'Acquire'
@@ -108,7 +95,7 @@ module Rustls
     HandshakeQuery,
     getALPNProtocol,
     getTLSVersion,
-    getCipherSuite,
+    getNegotiatedCipherSuite,
     getSNIHostname,
     getPeerCertificate,
 
@@ -132,6 +119,13 @@ module Rustls
     mkSocketBackend,
     mkByteStringBackend,
 
+    -- ** Crypto provider
+    CryptoProvider,
+    getDefaultCryptoProvider,
+    setCryptoProviderCipherSuites,
+    cryptoProviderCipherSuites,
+    cryptoProviderTLSVersions,
+
     -- ** Types
     ALPNProtocol (..),
     PEMCertificates (..),
@@ -140,13 +134,8 @@ module Rustls
     DERCertificate (..),
     CertificateRevocationList (..),
     TLSVersion (TLS12, TLS13, unTLSVersion),
-    defaultTLSVersions,
-    allTLSVersions,
-    CipherSuite,
-    cipherSuiteID,
-    showCipherSuite,
-    defaultCipherSuites,
-    allCipherSuites,
+    CipherSuite (..),
+    NegotiatedCipherSuite (..),
 
     -- ** Exceptions
     RustlsException,
@@ -159,6 +148,7 @@ import Control.Concurrent (forkFinally, killThread)
 import Control.Concurrent.MVar
 import Control.Exception qualified as E
 import Control.Monad (forever, void, when)
+import Control.Monad.Except (MonadError (..), liftEither)
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Cont
 import Control.Monad.Trans.Reader
@@ -168,9 +158,11 @@ import Data.ByteString qualified as B
 import Data.ByteString.Internal qualified as BI
 import Data.ByteString.Unsafe qualified as BU
 import Data.Coerce
+import Data.Containers.ListUtils (nubOrd)
 import Data.Foldable (for_, toList)
 import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Foreign qualified as T
@@ -189,51 +181,115 @@ import System.IO.Unsafe (unsafePerformIO)
 -- >>> import Control.Monad.IO.Class
 -- >>> import Data.Acquire
 
--- | Combined version string of Rustls and rustls-ffi.
+-- | Combined version string of Rustls and rustls-ffi, as well as the Rustls
+-- cryptography provider.
 --
 -- >>> version
--- "rustls-ffi/0.13.0/rustls/0.23.4"
+-- "rustls-ffi/0.14.0/rustls/0.23.13/aws-lc-rs"
 version :: Text
 version = unsafePerformIO $ alloca \strPtr -> do
   FFI.hsVersion strPtr
   strToText =<< peek strPtr
 {-# NOINLINE version #-}
 
-peekNonEmpty :: (Storable a, Coercible a b) => ConstPtr a -> CSize -> NonEmpty b
-peekNonEmpty (ConstPtr as) len =
-  NE.fromList . coerce . unsafePerformIO $ peekArray (cSizeToInt len) as
+buildCryptoProvider :: Ptr FFI.CryptoProviderBuilder -> IO CryptoProvider
+buildCryptoProvider builder = alloca \cryptoProviderPtr -> do
+  rethrowR =<< FFI.cryptoProviderBuilderBuild builder cryptoProviderPtr
+  ConstPtr cryptoProviderPtr <- peek cryptoProviderPtr
+  CryptoProvider <$> newForeignPtr FFI.cryptoProviderFree cryptoProviderPtr
 
--- | All 'TLSVersion's supported by Rustls.
-allTLSVersions :: NonEmpty TLSVersion
-allTLSVersions = peekNonEmpty FFI.allVersions FFI.allVersionsLen
-{-# NOINLINE allTLSVersions #-}
+-- | Get the process-wide default Rustls cryptography provider.
+getDefaultCryptoProvider :: (MonadIO m) => m CryptoProvider
+getDefaultCryptoProvider = liftIO $ E.mask_ $ evalContT do
+  builderPtr <- ContT alloca
+  builder <-
+    ContT $
+      E.bracketOnError
+        do
+          -- This actually also sets the process-wide default crypto provider if
+          -- not already set, which is a side effect.
+          rethrowR =<< FFI.cryptoProviderBuilderNewFromDefault builderPtr
+          peek builderPtr
+        FFI.cryptoProviderBuilderFree
+  liftIO $ buildCryptoProvider builder
 
--- | The default 'TLSVersion's used by Rustls. A subset of 'allTLSVersions'.
-defaultTLSVersions :: NonEmpty TLSVersion
-defaultTLSVersions = peekNonEmpty FFI.defaultVersions FFI.defaultVersionsLen
-{-# NOINLINE defaultTLSVersions #-}
+-- | Create a derived 'CryptoProvider' by restricting the cipher suites to the
+-- ones in the given list.
+setCryptoProviderCipherSuites ::
+  (MonadError RustlsException m) =>
+  -- | Must be a subset of 'cryptoProviderCipherSuites'. Only the
+  -- 'cipherSuiteID' is used.
+  [CipherSuite] ->
+  CryptoProvider ->
+  m CryptoProvider
+setCryptoProviderCipherSuites cipherSuites cryptoProvider =
+  liftEither $ unsafePerformIO $ E.try $ E.mask_ $ evalContT do
+    cryptoProviderPtr <- withCryptoProvider cryptoProvider
+    builder <-
+      ContT $
+        E.bracketOnError
+          (FFI.cryptoProviderBuilderNewWithBase cryptoProviderPtr)
+          FFI.cryptoProviderBuilderFree
 
--- | All 'CipherSuite's supported by Rustls.
-allCipherSuites :: NonEmpty CipherSuite
-allCipherSuites = peekNonEmpty FFI.allCipherSuites FFI.allCipherSuitesLen
-{-# NOINLINE allCipherSuites #-}
+    let filteredCipherSuites =
+          [ cipherSuitePtr
+          | i <- [1 .. len],
+            let cipherSuitePtr =
+                  FFI.cryptoProviderCiphersuitesGet cryptoProviderPtr (i - 1)
+                cipherSuiteID = FFI.supportedCipherSuiteGetSuite cipherSuitePtr,
+            cipherSuiteID `Set.member` cipherSuiteIDs
+          ]
+          where
+            len = FFI.cryptoProviderCiphersuitesLen cryptoProviderPtr
+            cipherSuiteIDs = Set.fromList $ cipherSuiteID <$> cipherSuites
 
--- | The default 'CipherSuite's used by Rustls. A subset of 'allCipherSuites'.
-defaultCipherSuites :: NonEmpty CipherSuite
-defaultCipherSuites = peekNonEmpty FFI.defaultCipherSuites FFI.defaultCipherSuitesLen
-{-# NOINLINE defaultCipherSuites #-}
+    (csPtr, csLen) <- ContT \cb -> withArrayLen filteredCipherSuites \len ptr ->
+      cb (ConstPtr ptr, intToCSize len)
+    liftIO $ rethrowR =<< FFI.cryptoProviderBuilderSetCipherSuites builder csPtr csLen
 
--- | A 'ClientConfigBuilder' with good defaults.
-defaultClientConfigBuilder :: ServerCertVerifier -> ClientConfigBuilder
-defaultClientConfigBuilder serverCertVerifier =
-  ClientConfigBuilder
-    { clientConfigServerCertVerifier = serverCertVerifier,
-      clientConfigTLSVersions = [],
-      clientConfigCipherSuites = [],
-      clientConfigALPNProtocols = [],
-      clientConfigEnableSNI = True,
-      clientConfigCertifiedKeys = []
-    }
+    liftIO $ buildCryptoProvider builder
+
+withCryptoProvider :: CryptoProvider -> ContT a IO (ConstPtr FFI.CryptoProvider)
+withCryptoProvider =
+  fmap ConstPtr . ContT . withForeignPtr . unCryptoProvider
+
+-- | Get the cipher suites supported by the given cryptography provider.
+cryptoProviderCipherSuites :: CryptoProvider -> [CipherSuite]
+cryptoProviderCipherSuites cryptoProvider = unsafePerformIO $ evalContT do
+  cryptoProviderPtr <- withCryptoProvider cryptoProvider
+  liftIO do
+    let len = FFI.cryptoProviderCiphersuitesLen cryptoProviderPtr
+    for [1 .. len] \i -> do
+      let cipherSuitePtr = FFI.cryptoProviderCiphersuitesGet cryptoProviderPtr (i - 1)
+          cipherSuiteID = FFI.supportedCipherSuiteGetSuite cipherSuitePtr
+      cipherSuiteName <-
+        alloca \strPtr -> do
+          FFI.hsSupportedCipherSuiteGetName cipherSuitePtr strPtr
+          strToText =<< peek strPtr
+      cipherSuiteTLSVersion <-
+        FFI.hsSupportedCiphersuiteProtocolVersion cipherSuitePtr
+      pure CipherSuite {..}
+
+-- | Get all TLS versions supported by at least one of the cipher suites
+-- supported by the given cryptography provider.
+cryptoProviderTLSVersions :: CryptoProvider -> [TLSVersion]
+cryptoProviderTLSVersions =
+  nubOrd
+    . fmap cipherSuiteTLSVersion
+    . cryptoProviderCipherSuites
+
+-- | A 'ClientConfigBuilder' with good defaults, using the OS certificate store.
+defaultClientConfigBuilder :: (MonadIO m) => m ClientConfigBuilder
+defaultClientConfigBuilder = do
+  cryptoProvider <- getDefaultCryptoProvider
+  pure
+    ClientConfigBuilder
+      { clientConfigCryptoProvider = cryptoProvider,
+        clientConfigServerCertVerifier = PlatformServerCertVerifier,
+        clientConfigALPNProtocols = [],
+        clientConfigEnableSNI = True,
+        clientConfigCertifiedKeys = []
+      }
 
 withCertifiedKeys :: [CertifiedKey] -> ContT a IO (ConstPtr (ConstPtr FFI.CertifiedKey), CSize)
 withCertifiedKeys certifiedKeys = do
@@ -264,33 +320,24 @@ withALPNProtocols bss = do
       pure $ FFI.SliceBytes (castPtr buf) (intToCSize len)
 
 configBuilderNew ::
-  ( ConstPtr (ConstPtr FFI.SupportedCipherSuite) ->
-    CSize ->
+  ( ConstPtr FFI.CryptoProvider ->
     ConstPtr TLSVersion ->
     CSize ->
     Ptr (Ptr configBuilder) ->
     IO FFI.Result
   ) ->
-  [CipherSuite] ->
-  [TLSVersion] ->
+  CryptoProvider ->
   IO (Ptr configBuilder)
-configBuilderNew configBuilderNewCustom cipherSuites tlsVersions = evalContT do
+configBuilderNew configBuilderNewCustom cryptoProvider = evalContT do
+  cryptoProviderPtr <- withCryptoProvider cryptoProvider
   builderPtr <- ContT alloca
-  (cipherSuitesLen, cipherSuitesPtr) <-
-    if null cipherSuites
-      then pure (FFI.defaultCipherSuitesLen, FFI.defaultCipherSuites)
-      else ContT \cb -> withArrayLen (coerce cipherSuites) \len ptr ->
-        cb (intToCSize len, ConstPtr ptr)
   (tlsVersionsLen, tlsVersionsPtr) <-
-    if null tlsVersions
-      then pure (FFI.defaultVersionsLen, FFI.defaultVersions)
-      else ContT \cb -> withArrayLen tlsVersions \len ptr ->
-        cb (intToCSize len, ConstPtr ptr)
+    ContT \cb -> withArrayLen (cryptoProviderTLSVersions cryptoProvider) \len ptr ->
+      cb (intToCSize len, ConstPtr ptr)
   liftIO do
     rethrowR
       =<< configBuilderNewCustom
-        cipherSuitesPtr
-        cipherSuitesLen
+        cryptoProviderPtr
         tlsVersionsPtr
         tlsVersionsLen
         builderPtr
@@ -340,31 +387,36 @@ buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
       E.bracketOnError
         ( configBuilderNew
             FFI.clientConfigBuilderNewCustom
-            clientConfigCipherSuites
-            clientConfigTLSVersions
+            clientConfigCryptoProvider
         )
         FFI.clientConfigBuilderFree
 
-  let ServerCertVerifier {..} = clientConfigServerCertVerifier
-  rootCertStore <- withRootCertStore $ toList serverCertVerifierCertificates
-  scvb <-
-    ContT $
-      E.bracket
-        (FFI.webPkiServerCertVerifierBuilderNew rootCertStore)
-        FFI.webPkiServerCertVerifierBuilderFree
-  crls :: [CStringLen] <-
-    for serverCertVerifierCRLs $
-      ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
-  liftIO $ for_ crls \(ptr, len) ->
-    FFI.webPkiServerCertVerifierBuilderAddCrl
-      scvb
-      (ConstPtr (castPtr ptr))
-      (intToCSize len)
-  scvPtr <- ContT alloca
-  let buildScv = do
-        rethrowR =<< FFI.webPkiServerCertVerifierBuilderBuild scvb scvPtr
-        peek scvPtr
-  scv <- ContT $ E.bracket buildScv FFI.serverCertVerifierFree
+  cryptoProviderPtr <- withCryptoProvider clientConfigCryptoProvider
+
+  scv <- case clientConfigServerCertVerifier of
+    PlatformServerCertVerifier ->
+      withCryptoProvider clientConfigCryptoProvider
+        >>= liftIO . FFI.platformServerCertVerifierWithProvider
+    ServerCertVerifier {..} -> do
+      rootCertStore <- withRootCertStore $ toList serverCertVerifierCertificates
+      scvb <-
+        ContT $
+          E.bracket
+            (FFI.webPkiServerCertVerifierBuilderNewWithProvider cryptoProviderPtr rootCertStore)
+            FFI.webPkiServerCertVerifierBuilderFree
+      crls :: [CStringLen] <-
+        for serverCertVerifierCRLs $
+          ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
+      liftIO $ for_ crls \(ptr, len) ->
+        FFI.webPkiServerCertVerifierBuilderAddCrl
+          scvb
+          (ConstPtr (castPtr ptr))
+          (intToCSize len)
+      scvPtr <- ContT alloca
+      let buildScv = do
+            rethrowR =<< FFI.webPkiServerCertVerifierBuilderBuild scvb scvPtr
+            peek scvPtr
+      ContT $ E.bracket buildScv FFI.serverCertVerifierFree
   liftIO $ FFI.clientConfigBuilderSetServerVerifier builder (ConstPtr scv)
 
   (alpnPtr, len) <- withALPNProtocols clientConfigALPNProtocols
@@ -378,10 +430,12 @@ buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
 
   let clientConfigLogCallback = Nothing
 
+  clientConfigPtrPtr <- ContT alloca
   liftIO do
+    rethrowR =<< FFI.clientConfigBuilderBuild builder clientConfigPtrPtr
     clientConfigPtr <-
       newForeignPtr FFI.clientConfigFree . unConstPtr
-        =<< FFI.clientConfigBuilderBuild builder
+        =<< peek clientConfigPtrPtr
     pure ClientConfig {..}
 
 -- | Build a 'ServerConfigBuilder' into a 'ServerConfig'.
@@ -395,10 +449,11 @@ buildServerConfig ServerConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
       E.bracketOnError
         ( configBuilderNew
             FFI.serverConfigBuilderNewCustom
-            serverConfigCipherSuites
-            serverConfigTLSVersions
+            serverConfigCryptoProvider
         )
         FFI.serverConfigBuilderFree
+
+  cryptoProviderPtr <- withCryptoProvider serverConfigCryptoProvider
 
   (alpnPtr, len) <- withALPNProtocols serverConfigALPNProtocols
   liftIO $ rethrowR =<< FFI.serverConfigBuilderSetALPNProtocols builder alpnPtr len
@@ -417,7 +472,7 @@ buildServerConfig ServerConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
     ccvb <-
       ContT $
         E.bracket
-          (FFI.webPkiClientCertVerifierBuilderNew roots)
+          (FFI.webPkiClientCertVerifierBuilderNewWithProvider cryptoProviderPtr roots)
           FFI.webPkiClientCertVerifierBuilderFree
     crls :: [CStringLen] <-
       for clientCertVerifierCRLs $
@@ -439,24 +494,28 @@ buildServerConfig ServerConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
     ccv <- ContT $ E.bracket buildCcv FFI.clientCertVerifierFree
     liftIO $ FFI.serverConfigBuilderSetClientVerifier builder (ConstPtr ccv)
 
+  serverConfigPtrPtr <- ContT alloca
   liftIO do
+    rethrowR =<< FFI.serverConfigBuilderBuild builder serverConfigPtrPtr
     serverConfigPtr <-
       newForeignPtr FFI.serverConfigFree . unConstPtr
-        =<< FFI.serverConfigBuilderBuild builder
+        =<< peek serverConfigPtrPtr
     let serverConfigLogCallback = Nothing
     pure ServerConfig {..}
 
 -- | A 'ServerConfigBuilder' with good defaults.
-defaultServerConfigBuilder :: NonEmpty CertifiedKey -> ServerConfigBuilder
-defaultServerConfigBuilder certifiedKeys =
-  ServerConfigBuilder
-    { serverConfigCertifiedKeys = certifiedKeys,
-      serverConfigTLSVersions = [],
-      serverConfigCipherSuites = [],
-      serverConfigALPNProtocols = [],
-      serverConfigIgnoreClientOrder = False,
-      serverConfigClientCertVerifier = Nothing
-    }
+defaultServerConfigBuilder ::
+  (MonadIO m) => NonEmpty CertifiedKey -> m ServerConfigBuilder
+defaultServerConfigBuilder certifiedKeys = do
+  cryptoProvider <- getDefaultCryptoProvider
+  pure
+    ServerConfigBuilder
+      { serverConfigCryptoProvider = cryptoProvider,
+        serverConfigCertifiedKeys = certifiedKeys,
+        serverConfigALPNProtocols = [],
+        serverConfigIgnoreClientOrder = False,
+        serverConfigClientCertVerifier = Nothing
+      }
 
 -- | Allocate a new logging callback, taking a 'LogLevel' and a message.
 --
@@ -584,12 +643,20 @@ getTLSVersion = handshakeQuery \Connection' {conn} -> do
   pure ver
 
 -- | Get the negotiated cipher suite.
-getCipherSuite :: HandshakeQuery side CipherSuite
-getCipherSuite = handshakeQuery \Connection' {conn} -> do
-  !cipherSuite <- FFI.connectionGetNegotiatedCipherSuite (ConstPtr conn)
-  when (cipherSuite == ConstPtr nullPtr) $
+getNegotiatedCipherSuite :: HandshakeQuery side NegotiatedCipherSuite
+getNegotiatedCipherSuite = handshakeQuery \Connection' {conn} -> do
+  negotiatedCipherSuiteID <-
+    FFI.connectionGetNegotiatedCipherSuite (ConstPtr conn)
+  when (negotiatedCipherSuiteID == 0) $
     fail "internal rustls error: no cipher suite negotiated"
-  pure $ CipherSuite cipherSuite
+
+  negotiatedCipherSuiteName <- alloca \strPtr -> do
+    FFI.connectionGetNegotiatedCipherSuiteName (ConstPtr conn) strPtr
+    strToText =<< peek strPtr
+  when (T.null negotiatedCipherSuiteName) $
+    fail "internal rustls error: no cipher suite negotiated"
+
+  pure NegotiatedCipherSuite {..}
 
 -- | Get the SNI hostname set by the client, if any.
 getSNIHostname :: HandshakeQuery Server (Maybe Text)

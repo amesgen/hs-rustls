@@ -11,12 +11,12 @@ import Control.Monad.Trans.State.Strict (execStateT, modify')
 import Data.Acquire
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
+import Data.Containers.ListUtils (nubOrd)
 import Data.Foldable (for_)
 import Data.Functor (void)
 import Data.IORef
-import Data.List.NonEmpty qualified as NE
-import Data.Maybe (fromMaybe, isJust)
-import Data.Set qualified as S
+import Data.Maybe (isJust)
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Hedgehog
@@ -36,29 +36,26 @@ main :: IO ()
 main =
   defaultMain . testGroup "Basic Rustls tests" $
     [ testCase "TLS versions" do
-        S.fromList [Rustls.TLS12, Rustls.TLS13]
-          @?= S.fromList (NE.toList Rustls.defaultTLSVersions)
-        assertBool "Unexpected default TLS versions" $
-          S.fromList (NE.toList Rustls.defaultTLSVersions)
-            `S.isSubsetOf` S.fromList (NE.toList Rustls.allTLSVersions),
+        cryptoProvider <- Rustls.getDefaultCryptoProvider
+        Set.fromList [Rustls.TLS12, Rustls.TLS13]
+          @?= Set.fromList (Rustls.cryptoProviderTLSVersions cryptoProvider),
       testCase "Cipher suites" do
-        let defaultCipherSuites = S.fromList (NE.toList Rustls.defaultCipherSuites)
-            allCipherSuites = S.fromList (NE.toList Rustls.allCipherSuites)
-        assertBool "Unexpected default cipher suites" $
-          defaultCipherSuites `S.isSubsetOf` allCipherSuites
-        assertBool "Misbehaving ID function for cipher suites" $
-          S.map Rustls.cipherSuiteID defaultCipherSuites
-            `S.isSubsetOf` S.map Rustls.cipherSuiteID allCipherSuites
-        assertBool "Misbehaving display function for cipher suites" $
-          S.map Rustls.showCipherSuite defaultCipherSuites
-            `S.isSubsetOf` S.map Rustls.showCipherSuite allCipherSuites,
+        cryptoProvider <- Rustls.getDefaultCryptoProvider
+        let cipherSuites = Rustls.cryptoProviderCipherSuites cryptoProvider
+        nubOrd cipherSuites @=? cipherSuites
+        let cipherSuiteIDs = Rustls.cipherSuiteID <$> cipherSuites
+        nubOrd cipherSuiteIDs @=? cipherSuiteIDs
+        let cipherSuiteNames = Rustls.cipherSuiteName <$> cipherSuites
+        nubOrd cipherSuiteNames @=? cipherSuiteNames,
       testInMemory
     ]
 
 testInMemory :: TestTree
 testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
   testProperty "Test in-memory TLS" $ property do
-    testSetup <- forAll . genTestSetup =<< liftIO getMiniCA
+    cryptoProvider <- liftIO Rustls.getDefaultCryptoProvider
+
+    testSetup <- forAll . genTestSetup cryptoProvider =<< liftIO getMiniCA
 
     (res, tlsLogLines) <- runInMemoryTest testSetup
 
@@ -68,13 +65,15 @@ testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
         Rustls.ClientConfigBuilder {..} = clientConfigBuilder
         Rustls.ServerConfigBuilder {..} = serverConfigBuilder
         clientTLSVersions =
-          nonEmptySet Rustls.defaultTLSVersions clientConfigTLSVersions
+          Set.fromList $ Rustls.cryptoProviderTLSVersions clientConfigCryptoProvider
         serverTLSVersions =
-          nonEmptySet Rustls.defaultTLSVersions serverConfigTLSVersions
+          Set.fromList $ Rustls.cryptoProviderTLSVersions serverConfigCryptoProvider
         clientCipherSuites =
-          nonEmptySet Rustls.defaultCipherSuites clientConfigCipherSuites
+          Set.fromList . fmap toNegotiatedCipherSuite $
+            Rustls.cryptoProviderCipherSuites clientConfigCryptoProvider
         serverCipherSuites =
-          nonEmptySet Rustls.defaultCipherSuites serverConfigCipherSuites
+          Set.fromList . fmap toNegotiatedCipherSuite $
+            Rustls.cryptoProviderCipherSuites serverConfigCryptoProvider
     case res of
       Right TestOutcome {..} -> do
         label "Success"
@@ -84,18 +83,18 @@ testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
           then sniHostname === Just testHostname
           else sniHostname === Nothing
         assert $
-          S.fromList [clientTLSVersion, serverTLSVersion]
-            `S.isSubsetOf` S.fromList [Rustls.TLS12, Rustls.TLS13]
+          Set.fromList [clientTLSVersion, serverTLSVersion]
+            `Set.isSubsetOf` Set.fromList [Rustls.TLS12, Rustls.TLS13]
         negotiatedClientALPNProtocol === negotiatedServerALPNProtocol
         assert $
-          maybe S.empty S.singleton negotiatedClientALPNProtocol
-            `S.isSubsetOf` ( S.fromList clientConfigALPNProtocols
-                               `S.intersection` S.fromList serverConfigALPNProtocols
-                           )
+          maybe Set.empty Set.singleton negotiatedClientALPNProtocol
+            `Set.isSubsetOf` ( Set.fromList clientConfigALPNProtocols
+                                 `Set.intersection` Set.fromList serverConfigALPNProtocols
+                             )
         clientCipherSuite === serverCipherSuite
         assert $
           clientCipherSuite
-            `S.member` (clientCipherSuites `S.intersection` serverCipherSuites)
+            `Set.member` (clientCipherSuites `Set.intersection` serverCipherSuites)
         assert $ isJust clientPeerCert
         case Rustls.clientCertVerifierPolicy <$> serverConfigClientCertVerifier of
           Nothing ->
@@ -105,21 +104,24 @@ testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
           Just Rustls.AllowAnyAnonymousOrAuthenticatedClient ->
             isJust serverPeerCert /== null clientConfigCertifiedKeys
       Left (ex :: Rustls.RustlsException) -> do
-        label "Expected TLS failure"
         annotate $ E.displayException ex
         if
-          | S.fromList clientConfigALPNProtocols
-              `S.disjoint` S.fromList serverConfigALPNProtocols ->
+          | Set.fromList clientConfigALPNProtocols
+              `Set.disjoint` Set.fromList serverConfigALPNProtocols -> do
+              label "Expected TLS failure: No common ALPN protocol"
               success
-          | clientTLSVersions `S.disjoint` serverTLSVersions ->
+          | clientTLSVersions `Set.disjoint` serverTLSVersions -> do
+              label "Expected TLS failure: No common TLS version"
               success
           | Just Rustls.AllowAnyAuthenticatedClient <-
               Rustls.clientCertVerifierPolicy <$> serverConfigClientCertVerifier,
-            null clientConfigCertifiedKeys ->
+            null clientConfigCertifiedKeys -> do
+              label "Expected TLS failure: No client cert"
+              success
+          | Rustls.PlatformServerCertVerifier <- clientConfigServerCertVerifier -> do
+              label "Expected TLS failure: Platform verifier denies self-signed cert"
               success
           | otherwise -> failure
-  where
-    nonEmptySet def = S.fromList . NE.toList . fromMaybe def . NE.nonEmpty
 
 testHostname :: Text
 testHostname = "example.org"
@@ -140,28 +142,31 @@ data MiniCA = MiniCA
     miniCAClientCertKey, miniCAServerCertKey :: Rustls.CertifiedKey
   }
 
-genTestSetup :: (MonadGen m) => MiniCA -> m TestSetup
-genTestSetup MiniCA {..} = do
+genTestSetup :: (MonadGen m) => Rustls.CryptoProvider -> MiniCA -> m TestSetup
+genTestSetup cryptoProvider MiniCA {..} = do
   commonALPNProtocols <- genALPNProtocols
+  clientConfigCryptoProvider <- genCryptoProvider
   clientConfigServerCertVerifier <- do
-    parsing <- Gen.enumBounded
-    serverCertVerifierCertificates <-
-      pure
-        <$> Gen.element
-          [ Rustls.PEMCertificatesInMemory miniCACert parsing,
-            Rustls.PemCertificatesFromFile miniCAFile parsing
-          ]
-    let serverCertVerifierCRLs = [] -- TODO test this
-    pure Rustls.ServerCertVerifier {..}
+    Gen.frequency
+      [ (1, pure Rustls.PlatformServerCertVerifier),
+        (10,) do
+          parsing <- Gen.enumBounded
+          serverCertVerifierCertificates <-
+            pure
+              <$> Gen.element
+                [ Rustls.PEMCertificatesInMemory miniCACert parsing,
+                  Rustls.PemCertificatesFromFile miniCAFile parsing
+                ]
+          let serverCertVerifierCRLs = [] -- TODO test this
+          pure Rustls.ServerCertVerifier {..}
+      ]
   clientConfigALPNProtocols <- (commonALPNProtocols <>) <$> genALPNProtocols
   clientConfigEnableSNI <- Gen.bool_
-  clientConfigTLSVersions <- genTLSVersions
   clientConfigCertifiedKeys <- Gen.subsequence [miniCAClientCertKey]
-  let clientConfigCipherSuites = getCipherSuites clientConfigTLSVersions
-      clientConfigBuilder = Rustls.ClientConfigBuilder {..}
+  let clientConfigBuilder = Rustls.ClientConfigBuilder {..}
+  serverConfigCryptoProvider <- genCryptoProvider
   serverConfigALPNProtocols <- (commonALPNProtocols <>) <$> genALPNProtocols
   serverConfigIgnoreClientOrder <- Gen.bool_
-  serverConfigTLSVersions <- genTLSVersions
   serverConfigClientCertVerifier <- Gen.maybe do
     clientCertVerifierPolicy <- Gen.enumBounded
     let clientCertVerifierCertificates =
@@ -171,8 +176,7 @@ genTestSetup MiniCA {..} = do
               Rustls.PEMCertificateParsingStrict
         clientCertVerifierCRLs = [] -- TODO test this
     pure Rustls.ClientCertVerifier {..}
-  let serverConfigCipherSuites = getCipherSuites serverConfigTLSVersions
-      serverConfigCertifiedKeys = pure miniCAServerCertKey
+  let serverConfigCertifiedKeys = pure miniCAServerCertKey
       serverConfigBuilder = Rustls.ServerConfigBuilder {..}
   clientSends <-
     -- TODO using 0 as a lower bound should work, but causes timeouts for some
@@ -185,16 +189,31 @@ genTestSetup MiniCA {..} = do
     genALPNProtocols =
       Gen.list (Range.constant 0 10) $
         Rustls.ALPNProtocol <$> Gen.bytes (Range.constant 1 10)
-    genTLSVersions =
-      Gen.shuffle =<< Gen.subsequence (NE.toList Rustls.allTLSVersions)
-    getCipherSuites tlsVersions =
-      filter ((`elem` tlsVersions) . tlsVersionFromCipherSuite) $
-        NE.toList Rustls.allCipherSuites
+
+    genCryptoProvider =
+      Gen.frequency
+        [ (1, pure cryptoProvider),
+          (10,) do
+            tlsVersions <- Gen.shuffle =<< Gen.subsequence allTLSVersions
+            let cipherSuites =
+                  [ cipherSuite
+                  | cipherSuite <- allCipherSuites,
+                    Rustls.cipherSuiteTLSVersion cipherSuite `elem` tlsVersions
+                  ]
+            pure case Rustls.setCryptoProviderCipherSuites cipherSuites cryptoProvider of
+              Left e -> error $ "unexpected: " <> show e
+              Right cp -> cp
+        ]
+      where
+        allTLSVersions = Rustls.cryptoProviderTLSVersions cryptoProvider
+        allCipherSuites = Rustls.cryptoProviderCipherSuites cryptoProvider
 
 data TestOutcome = TestOutcome
-  { negotiatedClientALPNProtocol, negotiatedServerALPNProtocol :: Maybe Rustls.ALPNProtocol,
+  { negotiatedClientALPNProtocol,
+    negotiatedServerALPNProtocol ::
+      Maybe Rustls.ALPNProtocol,
     clientTLSVersion, serverTLSVersion :: Rustls.TLSVersion,
-    clientCipherSuite, serverCipherSuite :: Rustls.CipherSuite,
+    clientCipherSuite, serverCipherSuite :: Rustls.NegotiatedCipherSuite,
     sniHostname :: Maybe Text,
     clientPeerCert, serverPeerCert :: Maybe Rustls.DERCertificate,
     clientReceived, serverReceived :: [ByteString]
@@ -220,7 +239,7 @@ runInMemoryTest TestSetup {..} = do
               (,,,,)
                 <$> Rustls.getALPNProtocol
                 <*> Rustls.getTLSVersion
-                <*> Rustls.getCipherSuite
+                <*> Rustls.getNegotiatedCipherSuite
                 <*> Rustls.getSNIHostname
                 <*> Rustls.getPeerCertificate 0
           received <-
@@ -246,7 +265,7 @@ runInMemoryTest TestSetup {..} = do
               (,,,)
                 <$> Rustls.getALPNProtocol
                 <*> Rustls.getTLSVersion
-                <*> Rustls.getCipherSuite
+                <*> Rustls.getNegotiatedCipherSuite
                 <*> Rustls.getPeerCertificate 0
           received <- recordOutput . for_ clientSends $ \bs -> do
             Rustls.writeBS conn bs
@@ -331,10 +350,9 @@ mkTestLogCallback ref id = Rustls.newLogCallback \lvl msg -> do
       line = "[" <> id <> "] [" <> lvlTxt <> "] " <> msg
   atomicModifyIORef' ref ((,()) . (line :))
 
-tlsVersionFromCipherSuite :: Rustls.CipherSuite -> Rustls.TLSVersion
-tlsVersionFromCipherSuite cipherSuite
-  | "TLS_" `T.isPrefixOf` str = Rustls.TLS12
-  | "TLS13_" `T.isPrefixOf` str = Rustls.TLS13
-  | otherwise = error "unexpected cipher suite"
-  where
-    str = Rustls.showCipherSuite cipherSuite
+toNegotiatedCipherSuite :: Rustls.CipherSuite -> Rustls.NegotiatedCipherSuite
+toNegotiatedCipherSuite Rustls.CipherSuite {..} =
+  Rustls.NegotiatedCipherSuite
+    { negotiatedCipherSuiteID = cipherSuiteID,
+      negotiatedCipherSuiteName = cipherSuiteName
+    }
