@@ -1,6 +1,6 @@
 cabal-version: 2.4
 name: rustls
-version: 0.1.0.0
+version: 0.2.0.0
 synopsis: TLS bindings for Rustls
 description:
   TLS bindings for [Rustls](https://github.com/rustls/rustls)
@@ -88,7 +88,7 @@ test-suite tasty
     containers,
     directory ^>=1.3,
     filepath >=1.4 && <1.6,
-    hedgehog >=1.0 && <1.5,
+    hedgehog >=1.0 && <1.6,
     process ^>=1.6,
     resourcet,
     rustls,

@@ -1,5 +1,15 @@
 # Revision history for rustls
 
+## 0.2.0.0 -- 24.09.2024
+
+ * Use rustls-ffi 0.14.0.
+    * New feature: accessing the OS certificate store via
+      `rustls-platform-verifier`.
+    * Cipher suites are now tied to a specific cryptography provider.
+    * TLS versions are now automatically derived from the specified cipher
+      suites.
+ * Support GHC 9.10
+
 ## 0.1.0.0 -- 06.04.2024
 
  * Use rustls-ffi 0.13.0, including new functionality (like recovactions)
