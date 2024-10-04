@@ -5,9 +5,18 @@
   };
   outputs = { self, nixpkgs, flake-utils }:
     let
-      rustlsFromPkgs = pkgs: pkgs.callPackage (import ./rustls.nix) { };
+      rustlsFromPkgs = import ./rustls.nix;
     in
-    { overlays.default = _: prev: { rustls = rustlsFromPkgs prev; }; } //
+    {
+      overlays.default = _: prev: {
+        rustls-ffi = rustlsFromPkgs prev;
+        haskell-nix = prev.haskell-nix or { } // {
+          extraPkgconfigMappings = prev.haskell-nix.extraPkgconfigMappings or { } // {
+            "rustls" = [ "rustls-ffi" ];
+          };
+        };
+      };
+    } //
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -17,30 +26,10 @@
         packages = {
           default = rustls;
           inherit rustls;
-          rustls-with-dylibs = rustls.override { buildDylibs = true; };
           rustls-static = rustlsFromPkgs pkgs.pkgsStatic;
           ci = pkgs.linkFarm "nix-rustls-ci" {
-            inherit (self.packages.${system})
-              rustls
-              rustls-with-dylibs;
+            inherit (self.packages.${system}) rustls;
           };
         };
-        devShells.default =
-          let
-            updatedLockFile = pkgs.writeShellApplication {
-              name = "updatedLockFile";
-              text = ''
-                RUSTLS_FFI=$(mktemp -ud)
-                cp --no-preserve=mode,ownership -r ${rustls.src} "$RUSTLS_FFI"
-                rm -f "$RUSTLS_FFI/Cargo.lock"
-                ${pkgs.cargo}/bin/cargo update --manifest-path "$RUSTLS_FFI/Cargo.toml"
-                cat "$RUSTLS_FFI/Cargo.lock"
-                rm -r "$RUSTLS_FFI"
-              '';
-            };
-          in
-          pkgs.mkShell {
-            packages = [ updatedLockFile ];
-          };
       });
 }
