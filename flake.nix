@@ -28,8 +28,6 @@
                 ;
             })
             (get-flake ./nix-rustls).overlays.default
-            # ghci(d) needs dynamic libs
-            (_: prev: { rustls = prev.rustls.override (_: { buildDylibs = true; }); })
           ];
         };
         inherit (pkgs) lib haskell-nix;
@@ -53,7 +51,7 @@
       in
       {
         packages = {
-          inherit (pkgs) rustls;
+          inherit (pkgs) rustls-ffi;
           ci = pkgs.linkFarmFromDrvs "hs-rustls-ci" (lib.attrValues self.checks.${system});
         };
         checks = flake-utils.lib.flattenTree
@@ -73,7 +71,8 @@
               nativeBuildInputs = [
                 pkgs.cabal-docspec
                 (hsPkgs.ghcWithPackages
-                  (ps: lib.attrValues (haskellLib.selectProjectPackages ps)))
+                  (ps: lib.filter (p: p ? components.library)
+                    (lib.attrValues (haskellLib.selectProjectPackages ps))))
               ];
             } ''
             export CABAL_DIR=$(mktemp -d)
@@ -88,7 +87,6 @@
             pkgs.cabal-install
             pkgs.cabal-docspec
           ] ++ self.checks.${system}.pre-commit-check.enabledPackages;
-          LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.rustls ];
           withHoogle = false;
           inherit (self.checks.${system}.pre-commit-check) shellHook;
         };

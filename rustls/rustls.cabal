@@ -22,6 +22,11 @@ source-repository head
   location: https://github.com/amesgen/hs-rustls
   type: git
 
+flag use-pkg-config
+  description: Whether to use pkgconfig-depends or extra-libraries
+  default: True
+  manual: False
+
 common commons
   default-language: GHC2021
   ghc-options:
@@ -68,7 +73,11 @@ library
     text >=2.0 && <2.2,
     transformers >=0.5.6 && <0.7,
 
-  extra-libraries: rustls
+  if flag(use-pkg-config)
+    pkgconfig-depends: rustls >=0.14 && <0.15
+  else
+    extra-libraries: rustls
+
   include-dirs: cbits
 
 test-suite tasty

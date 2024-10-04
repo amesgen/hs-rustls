@@ -2,3 +2,7 @@ dist-newstyle/
 cabal.project.local
 result*
 .pre-commit-config.yaml
+
+# mysterious file created by cabal build containing linker flags, probably
+# related to pkg-config
+rustls/output
