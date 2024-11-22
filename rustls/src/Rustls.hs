@@ -185,7 +185,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- cryptography provider.
 --
 -- >>> version
--- "rustls-ffi/0.14.0/rustls/0.23.13/aws-lc-rs"
+-- "rustls-ffi/0.14.1/rustls/0.23.18/aws-lc-rs"
 version :: Text
 version = unsafePerformIO $ alloca \strPtr -> do
   FFI.hsVersion strPtr
