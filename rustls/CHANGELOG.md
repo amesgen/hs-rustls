@@ -1,5 +1,10 @@
 # Revision history for rustls
 
+## 0.2.1.0 -- 30.12.2024
+
+ * Add `use-pkg-config` flag (enabled by default).
+ * Use rustls-ffi 0.14.1.
+
 ## 0.2.0.0 -- 24.09.2024
 
  * Use rustls-ffi 0.14.0.
