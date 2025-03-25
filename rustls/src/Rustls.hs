@@ -185,7 +185,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- cryptography provider.
 --
 -- >>> version
--- "rustls-ffi/0.14.1/rustls/0.23.18/aws-lc-rs"
+-- "rustls-ffi/0.15.0/rustls/0.23.25/aws-lc-rs"
 version :: Text
 version = unsafePerformIO $ alloca \strPtr -> do
   FFI.hsVersion strPtr
@@ -660,17 +660,11 @@ getNegotiatedCipherSuite = handshakeQuery \Connection' {conn} -> do
 
 -- | Get the SNI hostname set by the client, if any.
 getSNIHostname :: HandshakeQuery Server (Maybe Text)
-getSNIHostname = handshakeQuery \Connection' {conn, lenPtr} ->
-  let go n = allocaBytes (cSizeToInt n) \bufPtr -> do
-        res <- FFI.serverConnectionGetSNIHostname (ConstPtr conn) bufPtr n lenPtr
-        if res == FFI.resultInsufficientSize
-          then go (2 * n)
-          else do
-            rethrowR res
-            len <- peek lenPtr
-            !sni <- T.peekCStringLen (castPtr bufPtr, cSizeToInt len)
-            pure $ if T.null sni then Nothing else Just sni
-   in go 16
+getSNIHostname = handshakeQuery \Connection' {conn} -> do
+  sniHostname <- alloca \strPtr -> do
+    FFI.serverConnectionGetSNIHostname (ConstPtr conn) strPtr
+    strToText =<< peek strPtr
+  pure if T.null sniHostname then Nothing else Just sniHostname
 
 -- | A DER-encoded certificate.
 newtype DERCertificate = DERCertificate {unDERCertificate :: ByteString}

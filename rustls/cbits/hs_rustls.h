@@ -24,6 +24,13 @@ static inline void hs_rustls_connection_get_negotiated_ciphersuite_name(
   *str = rustls_connection_get_negotiated_ciphersuite_name(conn);
 }
 
+static inline void hs_rustls_server_connection_get_server_name(
+    const struct rustls_connection *conn, rustls_str *str);
+static inline void hs_rustls_server_connection_get_server_name(
+    const struct rustls_connection *conn, rustls_str *str) {
+  *str = rustls_server_connection_get_server_name(conn);
+}
+
 static inline uint16_t hs_rustls_supported_ciphersuite_protocol_version(
     const struct rustls_supported_ciphersuite *supported_ciphersuite);
 static inline uint16_t hs_rustls_supported_ciphersuite_protocol_version(
