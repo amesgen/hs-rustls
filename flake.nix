@@ -1,16 +1,16 @@
 {
   inputs = {
     haskellNix = {
-      url = "github:input-output-hk/haskell.nix";
+      url = "github:input-output-hk/haskell.nix/de148057";
       inputs.stackage.url = "github:input-output-hk/empty-flake";
     };
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
     nur.url = "github:nix-community/nur";
     flake-utils.url = "github:numtide/flake-utils";
-    get-flake.url = "github:ursi/get-flake";
     pre-commit-hooks.url = "github:cachix/git-hooks.nix";
+    nix-rustls.url = "path:./nix-rustls";
   };
-  outputs = inputs@{ self, nixpkgs, flake-utils, get-flake, ... }:
+  outputs = inputs@{ self, nixpkgs, flake-utils, ... }:
     flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
       let
         pkgs = import nixpkgs {
@@ -27,7 +27,7 @@
                 cabal-install
                 ;
             })
-            (get-flake ./nix-rustls).overlays.default
+            inputs.nix-rustls.overlays.default
           ];
         };
         inherit (pkgs) lib haskell-nix;
