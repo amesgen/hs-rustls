@@ -9,7 +9,8 @@
     in
     {
       overlays.default = _: prev: {
-        rustls-ffi = rustlsFromPkgs prev;
+        # use prev instead once rustls-ffi in nixpkgs is stable
+        rustls-ffi = rustlsFromPkgs nixpkgs.legacyPackages.${prev.system};
         haskell-nix = prev.haskell-nix or { } // {
           extraPkgconfigMappings = prev.haskell-nix.extraPkgconfigMappings or { } // {
             "rustls" = [ "rustls-ffi" ];

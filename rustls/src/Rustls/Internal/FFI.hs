@@ -404,8 +404,8 @@ foreign import capi unsafe "rustls.h rustls_connection_get_negotiated_ciphersuit
 foreign import capi unsafe "rustls.h hs_rustls_connection_get_negotiated_ciphersuite_name"
   connectionGetNegotiatedCipherSuiteName :: ConstPtr Connection -> Ptr Str -> IO ()
 
-foreign import capi unsafe "rustls.h rustls_server_connection_get_server_name"
-  serverConnectionGetSNIHostname :: ConstPtr Connection -> Ptr Word8 -> CSize -> Ptr CSize -> IO Result
+foreign import capi unsafe "rustls.h hs_rustls_server_connection_get_server_name"
+  serverConnectionGetSNIHostname :: ConstPtr Connection -> Ptr Str -> IO ()
 
 foreign import capi unsafe "rustls.h rustls_connection_get_peer_certificate"
   connectionGetPeerCertificate :: ConstPtr Connection -> CSize -> IO (ConstPtr Certificate)

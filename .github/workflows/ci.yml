@@ -52,23 +52,21 @@ jobs:
         with:
           ghc-version: ${{ matrix.ghc }}
 
-      - name: Build rustls-ffi
+      - name: Install rustls-ffi
         run: |
           cd ${{ runner.temp }}
-          git clone https://github.com/rustls/rustls-ffi -b v0.14.1
-          cd rustls-ffi
-          make DESTDIR=${{ runner.temp }}/rustls install
+          wget "https://github.com/rustls/rustls-ffi/releases/download/v${RUSTLS_VERSION}/librustls_${RUSTLS_VERSION}_amd64.deb.zip"
+          7z x ./*.zip
+          sudo dpkg -i ./*.deb
+        env:
+          RUSTLS_VERSION: '0.15.0'
+
       - name: Install CLI dependencies
         run: |
           nix profile install --inputs-from . \
             nixpkgs#minica \
             nixpkgs#miniserve
 
-      - name: Configure
-        run: |
-          cabal configure --enable-tests \
-            --extra-include-dirs ${{ runner.temp }}/rustls/include \
-            --extra-lib-dirs     ${{ runner.temp }}/rustls/lib
       - name: Freeze build
         run: cabal freeze
       - uses: actions/cache@v4

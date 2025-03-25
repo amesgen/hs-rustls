@@ -18,7 +18,7 @@
           inherit (inputs.haskellNix) config;
           overlays = [
             inputs.haskellNix.overlay
-            inputs.nur.overlay
+            inputs.nur.overlays.default
             (_: prev: {
               inherit (prev.nur.repos.amesgen)
                 ormolu
