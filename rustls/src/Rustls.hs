@@ -4,8 +4,9 @@
 -- See the [README on GitHub](https://github.com/amesgen/hs-rustls/tree/main/rustls)
 -- for setup instructions.
 --
--- Currently, most of the functionality exposed by rustls-ffi is available,
--- while rustls-ffi is still missing some more niche Rustls features.
+-- Currently, a large part of the functionality exposed by rustls-ffi is
+-- available; please open an issue if you want to use something that is not yet
+-- exposed.
 --
 -- Also see [http-client-rustls](https://hackage.haskell.org/package/http-client-rustls)
 -- for making HTTPS requests using
@@ -93,9 +94,11 @@ module Rustls
     -- ** Handshaking
     handshake,
     HandshakeQuery,
+    getHandshakeKind,
     getALPNProtocol,
     getTLSVersion,
     getNegotiatedCipherSuite,
+    getNegotiatedKeyExchangeGroup,
     getSNIHostname,
     getPeerCertificate,
 
@@ -136,6 +139,12 @@ module Rustls
     TLSVersion (TLS12, TLS13, unTLSVersion),
     CipherSuite (..),
     NegotiatedCipherSuite (..),
+    NegotiatedKeyExchangeGroup (..),
+    HandshakeKind
+      ( HandshakeKindFull,
+        HandshakeKindFullWithHelloRetryRequest,
+        HandshakeKindResumed
+      ),
 
     -- ** Exceptions
     RustlsException,
@@ -407,11 +416,14 @@ buildClientConfig ClientConfigBuilder {..} = liftIO . E.mask_ $ evalContT do
       crls :: [CStringLen] <-
         for serverCertVerifierCRLs $
           ContT . BU.unsafeUseAsCStringLen . unCertificateRevocationList
-      liftIO $ for_ crls \(ptr, len) ->
-        FFI.webPkiServerCertVerifierBuilderAddCrl
-          scvb
-          (ConstPtr (castPtr ptr))
-          (intToCSize len)
+      liftIO do
+        for_ crls \(ptr, len) ->
+          FFI.webPkiServerCertVerifierBuilderAddCrl
+            scvb
+            (ConstPtr (castPtr ptr))
+            (intToCSize len)
+        when serverCertVerifierEnforceCRLExpiry $
+          rethrowR =<< FFI.webPkiServerCertVerifierEnforceRevocationExpiry scvb
       scvPtr <- ContT alloca
       let buildScv = do
             rethrowR =<< FFI.webPkiServerCertVerifierBuilderBuild scvb scvPtr
@@ -624,6 +636,11 @@ handshake conn (HandshakeQuery query) = liftIO do
     _ <- completePriorIO c
     runReaderT query c
 
+-- | Describes which sort of TLS handshake happened.
+getHandshakeKind :: HandshakeQuery side HandshakeKind
+getHandshakeKind = handshakeQuery \Connection' {conn} ->
+  HandshakeKind <$> FFI.connectionHandshakeKind (ConstPtr conn)
+
 -- | Get the negotiated ALPN protocol, if any.
 getALPNProtocol :: HandshakeQuery side (Maybe ALPNProtocol)
 getALPNProtocol = handshakeQuery \Connection' {conn, lenPtr} ->
@@ -657,6 +674,22 @@ getNegotiatedCipherSuite = handshakeQuery \Connection' {conn} -> do
     fail "internal rustls error: no cipher suite negotiated"
 
   pure NegotiatedCipherSuite {..}
+
+-- | Get the negotiated key exchange group.
+getNegotiatedKeyExchangeGroup :: HandshakeQuery side NegotiatedKeyExchangeGroup
+getNegotiatedKeyExchangeGroup = handshakeQuery \Connection' {conn} -> do
+  negotiatedKeyExchangeGroupID <-
+    FFI.connectionGetNegotiatedKeyExchangeGroup (ConstPtr conn)
+  when (negotiatedKeyExchangeGroupID == 0) $
+    fail "internal rustls error: no exchange group negotiated"
+
+  negotiatedKeyExchangeGroupName <- alloca \strPtr -> do
+    FFI.connectionGetNegotiatedKeyExchangeGroupName (ConstPtr conn) strPtr
+    strToText =<< peek strPtr
+  when (T.null negotiatedKeyExchangeGroupName) $
+    fail "internal rustls error: no key exchange group negotiated"
+
+  pure NegotiatedKeyExchangeGroup {..}
 
 -- | Get the SNI hostname set by the client, if any.
 getSNIHostname :: HandshakeQuery Server (Maybe Text)

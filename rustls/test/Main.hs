@@ -77,6 +77,11 @@ testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
     case res of
       Right TestOutcome {..} -> do
         label "Success"
+
+        -- TODO test more kinds
+        clientHandshakeKind === Rustls.HandshakeKindFull
+        serverHandshakeKind === Rustls.HandshakeKindFull
+
         clientSends === serverReceived
         clientSends === clientReceived
         if clientConfigEnableSNI
@@ -92,6 +97,7 @@ testInMemory = withMiniCA \(fmap snd -> getMiniCA) ->
                                  `Set.intersection` Set.fromList serverConfigALPNProtocols
                              )
         clientCipherSuite === serverCipherSuite
+        clientKeyExchangeGroup === serverKeyExchangeGroup
         assert $
           clientCipherSuite
             `Set.member` (clientCipherSuites `Set.intersection` serverCipherSuites)
@@ -158,6 +164,7 @@ genTestSetup cryptoProvider MiniCA {..} = do
                   Rustls.PemCertificatesFromFile miniCAFile parsing
                 ]
           let serverCertVerifierCRLs = [] -- TODO test this
+          serverCertVerifierEnforceCRLExpiry <- Gen.bool
           pure Rustls.ServerCertVerifier {..}
       ]
   clientConfigALPNProtocols <- (commonALPNProtocols <>) <$> genALPNProtocols
@@ -209,11 +216,13 @@ genTestSetup cryptoProvider MiniCA {..} = do
         allCipherSuites = Rustls.cryptoProviderCipherSuites cryptoProvider
 
 data TestOutcome = TestOutcome
-  { negotiatedClientALPNProtocol,
+  { clientHandshakeKind, serverHandshakeKind :: Rustls.HandshakeKind,
+    negotiatedClientALPNProtocol,
     negotiatedServerALPNProtocol ::
       Maybe Rustls.ALPNProtocol,
     clientTLSVersion, serverTLSVersion :: Rustls.TLSVersion,
     clientCipherSuite, serverCipherSuite :: Rustls.NegotiatedCipherSuite,
+    clientKeyExchangeGroup, serverKeyExchangeGroup :: Rustls.NegotiatedKeyExchangeGroup,
     sniHostname :: Maybe Text,
     clientPeerCert, serverPeerCert :: Maybe Rustls.DERCertificate,
     clientReceived, serverReceived :: [ByteString]
@@ -234,12 +243,14 @@ runInMemoryTest TestSetup {..} = do
               <$> Rustls.buildServerConfig serverConfigBuilder
           Rustls.newServerConnection backend rustlsConfig
         \conn -> do
-          (alpnProtocol, tlsVersion, cipherSuite, sniHostname, peerCert) <-
+          (handshakeKind, alpnProtocol, tlsVersion, cipherSuite, keyExGroup, sniHostname, peerCert) <-
             Rustls.handshake conn $
-              (,,,,)
-                <$> Rustls.getALPNProtocol
+              (,,,,,,)
+                <$> Rustls.getHandshakeKind
+                <*> Rustls.getALPNProtocol
                 <*> Rustls.getTLSVersion
                 <*> Rustls.getNegotiatedCipherSuite
+                <*> Rustls.getNegotiatedKeyExchangeGroup
                 <*> Rustls.getSNIHostname
                 <*> Rustls.getPeerCertificate 0
           received <-
@@ -250,7 +261,7 @@ runInMemoryTest TestSetup {..} = do
                     Rustls.writeBS conn bs
                     go
              in recordOutput go
-          pure (alpnProtocol, tlsVersion, cipherSuite, sniHostname, peerCert, received)
+          pure (handshakeKind, alpnProtocol, tlsVersion, cipherSuite, keyExGroup, sniHostname, peerCert, received)
 
       runClient backend = withAcquire
         do
@@ -260,33 +271,39 @@ runInMemoryTest TestSetup {..} = do
               <$> Rustls.buildClientConfig clientConfigBuilder
           Rustls.newClientConnection backend rustlsConfig testHostname
         \conn -> do
-          (alpnProtocol, tlsVersion, cipherSuite, peerCert) <-
+          (handshakeKind, alpnProtocol, tlsVersion, cipherSuite, keyExGroup, peerCert) <-
             Rustls.handshake conn $
-              (,,,)
-                <$> Rustls.getALPNProtocol
+              (,,,,,)
+                <$> Rustls.getHandshakeKind
+                <*> Rustls.getALPNProtocol
                 <*> Rustls.getTLSVersion
                 <*> Rustls.getNegotiatedCipherSuite
+                <*> Rustls.getNegotiatedKeyExchangeGroup
                 <*> Rustls.getPeerCertificate 0
           received <- recordOutput . for_ clientSends $ \bs -> do
             Rustls.writeBS conn bs
             bs <- Rustls.readBS conn testMessageLen
             modify' (bs :)
           Rustls.writeBS conn "close"
-          pure (alpnProtocol, tlsVersion, cipherSuite, peerCert, received)
+          pure (handshakeKind, alpnProtocol, tlsVersion, cipherSuite, keyExGroup, peerCert, received)
 
   (backend0, backend1) <- mkConnectedBackends
 
   res <- liftIO . runExceptT $ do
-    ( ( negotiatedServerALPNProtocol,
+    ( ( serverHandshakeKind,
+        negotiatedServerALPNProtocol,
         serverTLSVersion,
         serverCipherSuite,
+        serverKeyExchangeGroup,
         sniHostname,
         serverPeerCert,
         serverReceived
         ),
-      ( negotiatedClientALPNProtocol,
+      ( clientHandshakeKind,
+        negotiatedClientALPNProtocol,
         clientTLSVersion,
         clientCipherSuite,
+        clientKeyExchangeGroup,
         clientPeerCert,
         clientReceived
         )
