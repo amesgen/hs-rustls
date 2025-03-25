@@ -1,5 +1,11 @@
 # Revision history for rustls
 
+## 0.2.2.0 -- 25.03.2025
+
+ * Use rustls-ffi 0.15.0.
+    * Allow to get the handshake kind and the negotiated key exchange group.
+    * Allow to enforce CRL expiry.
+
 ## 0.2.1.0 -- 30.12.2024
 
  * Add `use-pkg-config` flag (enabled by default).
