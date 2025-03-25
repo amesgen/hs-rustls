@@ -24,7 +24,6 @@
                 ormolu
                 cabal-docspec
                 cabal-gild
-                cabal-install
                 ;
             })
             (get-flake ./nix-rustls).overlays.default
@@ -35,7 +34,7 @@
         projectPackages = [ "rustls" "http-client-rustls" ];
         hsPkgs = haskell-nix.cabalProject {
           src = ./.;
-          compiler-nix-name = "ghc910";
+          compiler-nix-name = "ghc912";
           modules = [
             { packages = lib.genAttrs projectPackages (_: { ghcOptions = [ "-Werror" ]; }); }
             {
