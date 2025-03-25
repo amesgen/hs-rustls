@@ -74,7 +74,8 @@ main = defaultMain $ withRustlsManagerAndServer \(fmap fst -> mgr) ->
                               Rustls.PemCertificatesFromFile
                                 (tmpDir </> "minica.pem")
                                 Rustls.PEMCertificateParsingStrict,
-                          Rustls.serverCertVerifierCRLs = []
+                          Rustls.serverCertVerifierCRLs = [],
+                          Rustls.serverCertVerifierEnforceCRLExpiry = True
                         }
                   }
           B.writeFile (tmpDir </> "file") $ B.replicate fileLength fileByte

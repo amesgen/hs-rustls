@@ -1,4 +1,14 @@
 -- | Internal module, not subject to PVP.
+--
+-- Functionality without bindings ATM (not exhaustive):
+--
+--  - Certain client verifier parts
+--  - Session persistence
+--  - ECH
+--  - SSLKEYLOG
+--  - FIPS
+--  - Explicit TLS 1.3 key updates
+--  - Certified key consistency check
 module Rustls.Internal.FFI
   ( ConstPtr (..),
     ConstCString,
@@ -19,6 +29,7 @@ module Rustls.Internal.FFI
     ServerCertVerifier,
     webPkiServerCertVerifierBuilderNewWithProvider,
     webPkiServerCertVerifierBuilderAddCrl,
+    webPkiServerCertVerifierEnforceRevocationExpiry,
     webPkiServerCertVerifierBuilderFree,
     webPkiServerCertVerifierBuilderBuild,
     platformServerCertVerifierWithProvider,
@@ -87,6 +98,10 @@ module Rustls.Internal.FFI
     connectionGetProtocolVersion,
     connectionGetNegotiatedCipherSuite,
     connectionGetNegotiatedCipherSuiteName,
+    connectionGetNegotiatedKeyExchangeGroup,
+    connectionGetNegotiatedKeyExchangeGroupName,
+    connectionHandshakeKind,
+    handshakeKindStr,
     serverConnectionGetSNIHostname,
     connectionGetPeerCertificate,
 
@@ -266,6 +281,10 @@ foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder
   webPkiServerCertVerifierBuilderAddCrl ::
     Ptr WebPkiServerCertVerifierBuilder -> ConstPtr Word8 -> CSize -> IO Result
 
+foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_enforce_revocation_expiry"
+  webPkiServerCertVerifierEnforceRevocationExpiry ::
+    Ptr WebPkiServerCertVerifierBuilder -> IO Result
+
 foreign import capi unsafe "rustls.h rustls_web_pki_server_cert_verifier_builder_free"
   webPkiServerCertVerifierBuilderFree ::
     Ptr WebPkiServerCertVerifierBuilder -> IO ()
@@ -331,8 +350,6 @@ data
   {-# CTYPE "rustls.h" "rustls_client_cert_verifier" #-}
   ClientCertVerifier
 
--- TODO all features?
-
 foreign import capi unsafe "rustls.h rustls_web_pki_client_cert_verifier_builder_new_with_provider"
   webPkiClientCertVerifierBuilderNewWithProvider ::
     ConstPtr CryptoProvider ->
@@ -360,8 +377,6 @@ foreign import capi unsafe "rustls.h rustls_client_cert_verifier_free"
 foreign import capi unsafe "rustls.h rustls_server_config_builder_set_client_verifier"
   serverConfigBuilderSetClientVerifier ::
     Ptr ServerConfigBuilder -> ConstPtr ClientCertVerifier -> IO ()
-
--- add custom session persistence functions?
 
 -- connection
 
@@ -401,10 +416,22 @@ foreign import capi unsafe "rustls.h rustls_connection_get_protocol_version"
 foreign import capi unsafe "rustls.h rustls_connection_get_negotiated_ciphersuite"
   connectionGetNegotiatedCipherSuite :: ConstPtr Connection -> IO Word16
 
-foreign import capi unsafe "rustls.h hs_rustls_connection_get_negotiated_ciphersuite_name"
+foreign import capi unsafe "hs_rustls.h hs_rustls_connection_get_negotiated_ciphersuite_name"
   connectionGetNegotiatedCipherSuiteName :: ConstPtr Connection -> Ptr Str -> IO ()
 
-foreign import capi unsafe "rustls.h hs_rustls_server_connection_get_server_name"
+foreign import capi unsafe "rustls.h rustls_connection_get_negotiated_key_exchange_group"
+  connectionGetNegotiatedKeyExchangeGroup :: ConstPtr Connection -> IO Word16
+
+foreign import capi unsafe "hs_rustls.h hs_rustls_connection_get_negotiated_key_exchange_group_name"
+  connectionGetNegotiatedKeyExchangeGroupName :: ConstPtr Connection -> Ptr Str -> IO ()
+
+foreign import capi unsafe "hs_rustls.h hs_rustls_connection_handshake_kind"
+  connectionHandshakeKind :: ConstPtr Connection -> IO Word16
+
+foreign import capi unsafe "hs_rustls.h hs_rustls_handshake_kind_str"
+  handshakeKindStr :: Word16 -> Ptr Str -> IO ()
+
+foreign import capi unsafe "hs_rustls.h hs_rustls_server_connection_get_server_name"
   serverConnectionGetSNIHostname :: ConstPtr Connection -> Ptr Str -> IO ()
 
 foreign import capi unsafe "rustls.h rustls_connection_get_peer_certificate"

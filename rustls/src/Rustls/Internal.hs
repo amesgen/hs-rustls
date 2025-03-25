@@ -71,6 +71,48 @@ data NegotiatedCipherSuite = NegotiatedCipherSuite
   }
   deriving stock (Show, Eq, Ord, Generic)
 
+-- | A negotiated key exchange group.
+data NegotiatedKeyExchangeGroup = NegotiatedKeyExchangeGroup
+  { -- | The IANA value of the key exchange group.
+    negotiatedKeyExchangeGroupID :: Word16,
+    -- | The text representation of the key exchange group.
+    negotiatedKeyExchangeGroupName :: Text
+  }
+  deriving stock (Show, Eq, Ord, Generic)
+
+-- | Describes which sort of TLS handshake happened.
+newtype HandshakeKind = HandshakeKind Word16
+  deriving newtype (Eq, Ord)
+
+instance Show HandshakeKind where
+  show (HandshakeKind kind) = unsafePerformIO $
+    alloca \strPtr -> do
+      FFI.handshakeKindStr kind strPtr
+      T.unpack <$> do strToText =<< peek strPtr
+
+-- | A full TLS handshake.
+--
+-- This is the typical TLS connection initiation process when resumption is not
+-- yet unavailable, and the initial client hello was accepted by the server.
+pattern HandshakeKindFull :: HandshakeKind
+pattern HandshakeKindFull = HandshakeKind 1
+
+-- | A full TLS handshake, with an extra round-trip for a hello retry request.
+--
+-- The server can respond with a hello retry request (HRR) if the initial client
+-- hello is unacceptable for several reasons, the most likely if no supported
+-- key shares were offered by the client.
+pattern HandshakeKindFullWithHelloRetryRequest :: HandshakeKind
+pattern HandshakeKindFullWithHelloRetryRequest = HandshakeKind 2
+
+-- | A resumed TLS handshake.
+--
+-- Resumed handshakes involve fewer round trips and less cryptography than full
+-- ones, but can only happen when the peers have previously done a full
+-- handshake together, and then remember data about it.
+pattern HandshakeKindResumed :: HandshakeKind
+pattern HandshakeKindResumed = HandshakeKind 3
+
 -- | Rustls client config builder.
 data ClientConfigBuilder = ClientConfigBuilder
   { -- | The cryptography provider.
@@ -100,7 +142,9 @@ data ServerCertVerifier
         serverCertVerifierCertificates :: NonEmpty PEMCertificates,
         -- | List of certificate revocation lists used to verify TLS server
         -- certificates.
-        serverCertVerifierCRLs :: [CertificateRevocationList]
+        serverCertVerifierCRLs :: [CertificateRevocationList],
+        -- | Whether to treat expired certificate revocation lists as an error condition.
+        serverCertVerifierEnforceCRLExpiry :: Bool
       }
   deriving stock (Show, Generic)
 
